@@ -6,6 +6,8 @@
 > · ✅ P1-1 — see `internal/apiconfig`, `internal/model`, `cmd/genisys`,
 > `.github/workflows/ci.yml`. All gates green locally: `make build`, `go test -race
 > ./...`, golden SSE replay, 4-OS cross-compile smoke, round-trip comment preservation.
+> Completed tasks are marked ✅ inline in the phase tables below
+> (legend: ✅ done · 🟡 in progress · ⬜ not started).
 
 This plan turns SPEC v0.2 (Go, YAML-only config, user-controlled interjection) into an
 ordered, dependency-aware work breakdown. Section references (`§x`) point at SPEC.md
@@ -254,29 +256,29 @@ Design notes:
 
 ---
 
-## 5. Phase 0 — Bootstrap (P0) — 3 SP
+## 5. Phase 0 — Bootstrap (P0) — 3 SP · ✅ complete (2026-11-24)
 
 *Goal: repo compiles, CI green, config engine real. Everything after builds on this.*
 
 | Task | Description | SPEC | DoD | SP |
 |---|---|---|---|---|
-| P0-1 | `go mod init`, layout per IMPL §2, `Makefile` (`build/test/lint/ui/dist`), golangci-lint config, `.editorconfig` | §19 | `make build` produces `genisys` binary | 1 |
-| P0-2 | `internal/apiconfig`: typed schema for `config.yaml`/`project.yaml`/`session.yaml`, 3-level merge, validation errors with file:line | §18 | `genisys config validate` + `config show` work; round-trip test preserves comments & key order | 2 |
-| P0-3 | CI skeleton (IMPL §14): build matrix (linux/amd64, linux/arm64, darwin/arm64, windows/amd64), lint, unit tests | §19 | green pipeline on empty test suite | 0.5 |
+| ✅ P0-1 | `go mod init`, layout per IMPL §2, `Makefile` (`build/test/lint/ui/dist`), golangci-lint config, `.editorconfig` | §19 | `make build` produces `genisys` binary | 1 |
+| ✅ P0-2 | `internal/apiconfig`: typed schema for `config.yaml`/`project.yaml`/`session.yaml`, 3-level merge, validation errors with file:line | §18 | `genisys config validate` + `config show` work; round-trip test preserves comments & key order | 2 |
+| ✅ P0-3 | CI skeleton (IMPL §14): build matrix (linux/amd64, linux/arm64, darwin/arm64, windows/amd64), lint, unit tests | §19 | green pipeline on empty test suite | 0.5 |
 
-**Exit gate:** `genisys config validate` against a hand-written dev `config.yaml` reports
+**Exit gate:** ✅ met (2026-11-24) — `genisys config validate` against a hand-written dev `config.yaml` reports
 the resolved endpoint + model; editing YAML by hand and re-running shows updated merge.
 
 ---
 
-## 6. Phase 1 — Model Client & CLI Loop (P1 ⇒ SPEC M0) — 13 SP
+## 6. Phase 1 — Model Client & CLI Loop (P1 ⇒ SPEC M0) — 13 SP · 🟡 in progress (1/9)
 
 *Goal: SPEC M0 exactly — headless agent that fixes a bug in a repo against two endpoints.*
 
 | Task | Description | SPEC | DoD | SP |
 |---|---|---|---|---|
-| P1-1 | `internal/model`: DTOs, SSE parser, streaming `Stream()`, usage capture | §13.1 | golden-file SSE replay tests pass | 2 |
-| P1-2 | Retry/backoff, `Retry-After`, mid-stream-drop policy, error taxonomy (typed errors → later error cards) | §13.3 | unit tests w/ httptest incl. 429+Retry-After, dropped stream | 1 |
+| ✅ P1-1 | `internal/model`: DTOs, SSE parser, streaming `Stream()`, usage capture | §13.1 | golden-file SSE replay tests pass | 2 |
+| 🟡 P1-2 | Retry/backoff, `Retry-After`, mid-stream-drop policy, error taxonomy (typed errors → later error cards) — *typed errors + `Retry-After` parsing already landed with P1-1 (`errors.go`); backoff loop still to do* | §13.3 | unit tests w/ httptest incl. 429+Retry-After, dropped stream | 1 |
 | P1-3 | Endpoint profiles: YAML load, capability probe ("Test connection" logic as library), quirks application | §13.2 | probe against dev endpoint classifies tools native/xml correctly | 1 |
 | P1-4 | `internal/agent/parser`: native `tool_calls` accumulator + XML fallback (fences, single quotes, trailing commas, missing close tags, `antml:` namespaces) + JSON repair + synthesized `tc_<n>` ids | §13.4 | table-driven suite + **fuzz target** (`FuzzParse`) with 60 s CI corpus | 3 |
 | P1-5 | `tools/registry` + first 6 tools: `read_file_lines`, `read_file_chars`, `list_dir`, `search_file_line`, `find_files`, `shell_command` (process groups, timeouts) | §9.1/§9.3 | each tool: unit tests on `testdata/` fixture repo | 2 |
@@ -519,7 +521,7 @@ Assumes ~1 dev, part-time; calendar = weeks from P0 start; ranges = optimistic�
 
 | Milestone | Phases | SP | Calendar | Gate |
 |---|---|---|---|---|
-| **M0** headless agent | P0+P1 | 16 | W1–W4 | SPEC M0 AC on 2 endpoints |
+| **M0** headless agent | P0+P1 | 16 | W1–W4 | SPEC M0 AC on 2 endpoints — 🟡 5/16 SP (P0 ✅, P1-1 ✅) |
 | **M1** safe harness | P2 | 16 | W5–W8 | revert + kill-9 resume |
 | **M2** usable app | P3 | 21 | W9–W14 | corpus 1 & 3 in UI + interjection UX |
 | **M3** documents | P4 | 13 | W13–W17 (overlaps P3b) | corpus 2 |
