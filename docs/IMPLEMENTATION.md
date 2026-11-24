@@ -2,6 +2,11 @@
 
 **Version:** 0.1 · **Date:** 2026-11-24 · **Companion to:** [`SPEC.md`](SPEC.md) (v0.2)
 
+> **Progress (2026-11-24):** ✅ P0-1 · ✅ P0-2 · ✅ P0-3 (pipeline pending first push)
+> · ✅ P1-1 — see `internal/apiconfig`, `internal/model`, `cmd/genisys`,
+> `.github/workflows/ci.yml`. All gates green locally: `make build`, `go test -race
+> ./...`, golden SSE replay, 4-OS cross-compile smoke, round-trip comment preservation.
+
 This plan turns SPEC v0.2 (Go, YAML-only config, user-controlled interjection) into an
 ordered, dependency-aware work breakdown. Section references (`§x`) point at SPEC.md
 unless prefixed with `IMPL §`. Effort estimates assume one experienced Go/TS developer

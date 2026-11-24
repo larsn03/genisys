@@ -1,0 +1,2 @@
+// Package sandbox — see docs/IMPLEMENTATION.md §2 and docs/SPEC.md.
+package sandbox

@@ -1,0 +1,20 @@
+# Binaries & build artifacts
+/dist/
+*.exe
+
+# Frontend (IMPL §2: ui/ builds into ui/dist, embedded via go:embed)
+ui/node_modules/
+ui/dist/
+
+# Local state & logs
+*.log
+coverage.out
+
+# Editor/OS noise
+.DS_Store
+.idea/
+.vscode/
+/genisys
+
+# pi session state
+.pi/
