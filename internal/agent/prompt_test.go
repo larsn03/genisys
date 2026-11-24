@@ -1,0 +1,69 @@
+package agent
+
+import (
+	"strings"
+	"testing"
+
+	tiktoken "github.com/pkoukk/tiktoken-go"
+
+	"github.com/larsn03/genisys/internal/tools"
+	exectool "github.com/larsn03/genisys/internal/tools/exec"
+	"github.com/larsn03/genisys/internal/tools/fileio"
+	"github.com/larsn03/genisys/internal/tools/search"
+)
+
+func sixTools() *tools.Registry {
+	r := tools.NewRegistry()
+	r.Add(fileio.ReadLines{})
+	r.Add(fileio.ReadChars{})
+	r.Add(fileio.ListDir{})
+	r.Add(search.SearchLine{})
+	r.Add(search.FindFiles{})
+	r.Add(exectool.Shell{})
+	return r
+}
+
+func TestPromptStructure(t *testing.T) {
+	env := PromptEnv{Cwd: "/home/u/proj", Scratchpad: "/tmp/scratch", ToolsMode: "native"}
+	env.Tools = sixTools().Definitions()
+	got, err := RenderSystem(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"You are an agent running inside Genisys",
+		"# Coding", "## Git", "# Communication",
+		"<workspace>", "<location>", "genisys/",
+		"<environment>", "<cwd>/home/u/proj</cwd>",
+		"#### `read_file_lines`", "#### `shell_command`",
+		"function-calling interface",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt missing %q", want)
+		}
+	}
+	// XML mode swaps the invocation section
+	xml, _ := RenderSystem(PromptEnv{Cwd: "/x", ToolsMode: "xml", Tools: env.Tools})
+	if !strings.Contains(xml, "<tool_name>") || strings.Contains(xml, "function-calling interface") {
+		t.Error("xml mode invocation section wrong")
+	}
+}
+
+// P1-7 DoD: rendered prompt ≤ 6k tokens including tool schemas (SPEC §8).
+func TestPromptTokenBudget(t *testing.T) {
+	env := PromptEnv{Cwd: "/home/u/proj", Scratchpad: "/tmp/scratch", ToolsMode: "xml"}
+	env.Tools = sixTools().Definitions()
+	got, err := RenderSystem(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc, err := tiktoken.GetEncoding("cl100k_base")
+	if err != nil {
+		t.Skipf("tiktoken unavailable: %v", err)
+	}
+	n := len(enc.Encode(got, nil, nil))
+	t.Logf("system prompt tokens (xml mode, 6 tools): %d", n)
+	if n > 6000 {
+		t.Errorf("prompt budget exceeded: %d > 6000 (SPEC §8)", n)
+	}
+}

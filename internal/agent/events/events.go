@@ -1,0 +1,39 @@
+// Package events defines the typed event spine (SPEC §21). In P1 the CLI is
+// the only subscriber; P3 persists these to the events table and streams
+// them over WS. Keep this package dependency-free.
+package events
+
+// Event type names (SPEC §21).
+const (
+	StepStarted           = "step_started"
+	TextDelta             = "text_delta"
+	ToolStarted           = "tool_started"
+	ToolOutput            = "tool_output"
+	ToolFinished          = "tool_finished"
+	Usage                 = "usage"
+	StepFinished          = "step_finished"
+	SessionStatus         = "session_status"
+	InterruptStarted      = "interrupt_started"
+	InterjectionDelivered = "interjection_delivered"
+)
+
+// Event is one spine record.
+type Event struct {
+	Type    string `json:"type"`
+	StepID  string `json:"step_id,omitempty"`
+	Payload any    `json:"payload,omitempty"`
+}
+
+// Sink receives events.
+type Sink interface {
+	Emit(Event)
+}
+
+// SinkFunc adapts a function to Sink.
+type SinkFunc func(Event)
+
+// Emit implements Sink.
+func (f SinkFunc) Emit(e Event) { f(e) }
+
+// Discard drops everything.
+var Discard Sink = SinkFunc(func(Event) {})
