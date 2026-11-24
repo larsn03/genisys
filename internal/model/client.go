@@ -23,6 +23,10 @@ type Client struct {
 	// includeUsage sends stream_options.include_usage; probed per endpoint
 	// in P1-3, degrades silently (SPEC §13.1).
 	includeUsage bool
+
+	// quirks are wire-level endpoint quirks detected by Probe (SPEC §13.2);
+	// applied automatically to every request.
+	quirks map[string]bool
 }
 
 // Option customizes a Client.
@@ -40,7 +44,7 @@ func New(baseURL, apiKey string, opts ...Option) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Client{baseURL: u, apiKey: apiKey, hc: &http.Client{}, includeUsage: true}
+	c := &Client{baseURL: u, apiKey: apiKey, hc: &http.Client{}, includeUsage: true, quirks: map[string]bool{}}
 	for _, o := range opts {
 		o(c)
 	}
@@ -94,7 +98,10 @@ func (h *StreamHandle) setErr(err error) {
 // handle's Events channel is buffered and closed on completion/error.
 func (c *Client) Stream(ctx context.Context, req ChatRequest) (*StreamHandle, error) {
 	req.Stream = true
-	if c.includeUsage {
+	if c.quirks[QuirkDropMaxTokens] {
+		req.MaxTokens = nil
+	}
+	if c.includeUsage && !c.quirks[QuirkRejectsStreamOptions] {
 		req.StreamOptions = &StreamOptions{IncludeUsage: true}
 	}
 	body, err := json.Marshal(req)
@@ -140,8 +147,10 @@ func (c *Client) pump(ctx context.Context, body io.ReadCloser, events chan<- Str
 			return ctx.Err()
 		}
 	}
+	sawDone := false
 	err := ParseSSE(body, func(rec SSEEvent) error {
 		if rec.Data == "[DONE]" {
+			sawDone = true
 			return io.EOF // stop parsing; clean end below
 		}
 		var chunk chatChunk
@@ -187,14 +196,16 @@ func (c *Client) pump(ctx context.Context, body io.ReadCloser, events chan<- Str
 		return nil
 	})
 	switch {
+	case ctx.Err() != nil:
+		h.setErr(ctx.Err()) // interrupt wins over the resulting read error
+	case err == nil && !sawDone:
+		// SPEC §13.3: a spec-compliant server ends with [DONE]; a bare
+		// connection close mid-stream is a drop, not a clean end.
+		h.setErr(fmt.Errorf("%w: stream closed without [DONE]", io.ErrUnexpectedEOF))
 	case err == nil || err == io.EOF:
 		// clean end
 	default:
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			h.setErr(ctxErr) // interrupt wins over the resulting read error
-		} else {
-			h.setErr(err)
-		}
+		h.setErr(err)
 	}
 	// Always surface a terminal Done event (unless cancelled) so the loop
 	// has one unambiguous stop signal regardless of how the stream ended.
