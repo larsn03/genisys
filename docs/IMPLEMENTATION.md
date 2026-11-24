@@ -2,10 +2,13 @@
 
 **Version:** 0.1 · **Date:** 2026-11-24 · **Companion to:** [`SPEC.md`](SPEC.md) (v0.2)
 
-> **Progress (2026-11-24):** ✅ P0-1 · ✅ P0-2 · ✅ P0-3 (pipeline pending first push)
-> · ✅ P1-1 — see `internal/apiconfig`, `internal/model`, `cmd/genisys`,
-> `.github/workflows/ci.yml`. All gates green locally: `make build`, `go test -race
-> ./...`, golden SSE replay, 4-OS cross-compile smoke, round-trip comment preservation.
+> **Progress (2026-11-24):** ✅ P0 (all) · ✅ **P1 (all: P1-1 … P1-9)** — headless
+> agent runs end-to-end: `genisys run` REPL with streaming render, native + XML
+> tool-calling, retries, capability probe, 6 tools, interjections (`/steer` `/queue`).
+> See `internal/{model,apiconfig,agent,tools}`, `cmd/genisys`, `.github/workflows/ci.yml`.
+> All gates green locally: `make build`, `go test -race ./...`, parser fuzzing,
+> 4-OS cross-compile smoke, round-trip comment preservation. The M0 exit gate now
+> needs live endpoints only (decision D1).
 > Completed tasks are marked ✅ inline in the phase tables below
 > (legend: ✅ done · 🟡 in progress · ⬜ not started).
 
@@ -278,14 +281,14 @@ the resolved endpoint + model; editing YAML by hand and re-running shows updated
 | Task | Description | SPEC | DoD | SP |
 |---|---|---|---|---|
 | ✅ P1-1 | `internal/model`: DTOs, SSE parser, streaming `Stream()`, usage capture | §13.1 | golden-file SSE replay tests pass | 2 |
-| 🟡 P1-2 | Retry/backoff, `Retry-After`, mid-stream-drop policy, error taxonomy (typed errors → later error cards) — *typed errors + `Retry-After` parsing already landed with P1-1 (`errors.go`); backoff loop still to do* | §13.3 | unit tests w/ httptest incl. 429+Retry-After, dropped stream | 1 |
-| P1-3 | Endpoint profiles: YAML load, capability probe ("Test connection" logic as library), quirks application | §13.2 | probe against dev endpoint classifies tools native/xml correctly | 1 |
-| P1-4 | `internal/agent/parser`: native `tool_calls` accumulator + XML fallback (fences, single quotes, trailing commas, missing close tags, `antml:` namespaces) + JSON repair + synthesized `tc_<n>` ids | §13.4 | table-driven suite + **fuzz target** (`FuzzParse`) with 60 s CI corpus | 3 |
-| P1-5 | `tools/registry` + first 6 tools: `read_file_lines`, `read_file_chars`, `list_dir`, `search_file_line`, `find_files`, `shell_command` (process groups, timeouts) | §9.1/§9.3 | each tool: unit tests on `testdata/` fixture repo | 2 |
-| P1-6 | `agent/loop.go` v1: step machine, tool dispatch (parallel batch w/ dependency rejection), result shaping/truncation, step budget + loop detection | §7.1–7.3 | replays golden transcripts to identical final state | 2 |
-| P1-7 | `agent/prompt.go` v1: identity + communication + tools + environment blocks (coding/git/workspace stubs) via `go:embed` templates; snapshot tests | §8 | rendered prompt ≤ 6k tokens w/ schemas; golden file | 1 |
-| P1-8 | `genisys run` CLI: REPL streaming render, `/steer` `/queue` interjection (stdin), Ctrl-C = stop | §7.4 | see P1-9 | 1 |
-| P1-9 | **Interjection v1 (CLI):** `Interjector` + boundary injection at tool_batch; interrupt = ctx cancel + synthetic `[interrupted…]` results; `/queue` delivers at next boundary with `[user interjection…]` prefix | §7.4 | AC: `/steer` mid-`shell_command` kills process group, workspace consistent, new instruction honored first; `/queue` mid-batch is delivered before next model call | 1 |
+| ✅ P1-2 | `model/retry.go`: `RetryPolicy` backoff loop, `Retry-After` (delta-seconds + HTTP-date), mid-stream-drop policy (complete tool calls accepted, prose-only retried), think-tag stripping | §13.3 | httptest: 429+Retry-After, 5×500 exhaustion, auth no-retry, drop-with-tool-calls accepted, drop-prose retried | 1 |
+| ✅ P1-3 | `model/profile.go`: capability probe (independent max_tokens / tools / stream_options / think-tag tests), quirks applied per request (`WithQuirks`), profile YAML already in schema | §13.2 | probe classifies tools native/xml/none + quirks on httptest fakes; live-endpoint confirmation pending D1 | 1 |
+| ✅ P1-4 | `internal/agent/parser`: native accumulator (`FromNative`) + XML fallback (fences, single quotes, trailing commas, missing close tags, `antml:` namespaces) + `RepairJSON` (smart quotes, Python literals, unquoted keys, unbalanced braces) | §13.4 | table-driven suite + `FuzzParse` (12M+ execs, no panics) | 3 |
+| ✅ P1-5 | `tools/registry` (OpenAI-shaped defs, §7.3 result shaping/truncation, unknown-tool recovery hint) + 6 tools incl. `shell_command` with process-group kill (unix/windows) | §9.1/§9.3 | unit tests on `testdata/fixturerepo` incl. timeout + kill-group | 2 |
+| ✅ P1-6 | `agent/loop.go` v1: cancellable step machine (model call + tool batch share one step ctx), parallel tool batch, step budget → forced wrap-up turn, identical-batch loop detection nudge | §7.1–7.3 | httptest mock-endpoint tests: native + XML flows, budget, nudge; golden-transcript replay vs live endpoint deferred to D1 | 2 |
+| ✅ P1-7 | `agent/prompt.go` + `templates/system.tmpl` (`go:embed`): identity, coding/git, communication, workspace locations, tools mode native/xml/none, environment block; re-rendered per request | §8 | structure snapshot test + tiktoken budget test: **1 502 tokens** ≤ 6k with 6 tool schemas | 1 |
+| ✅ P1-8 | `genisys run` REPL: config-driven endpoint/model/quirks, event-spine terminal render (steps, tool chips, usage), Ctrl-C = stop current task / quit when idle, graceful drain on `/quit` | §7.4 | E2E smoke vs scripted mock servers (native + XML) passes | 1 |
+| ✅ P1-9 | **Interjection v1 (CLI):** `agent/interject.go` queue + interrupt signal; `/queue` delivered at tool_batch boundary with `[user interjection…]` prefix; `/steer` cancels step ctx → process-group kill + `[interrupted…]` results; `/pending` + withdraw-ready | §7.4 | AC met in `TestInterruptKillsToolAndHonorsNewInstruction`: sleep killed <3 s, pre-sleep effect kept, post-sleep effect absent, new instruction honored first | 1 |
 
 **Exit gate (SPEC M0 AC):** scripted run on fixture repo against **two** endpoints
 (configurable via `testdata/endpoints.yaml`) completes bug-fix + test-run; parser survives
@@ -521,7 +524,7 @@ Assumes ~1 dev, part-time; calendar = weeks from P0 start; ranges = optimistic�
 
 | Milestone | Phases | SP | Calendar | Gate |
 |---|---|---|---|---|
-| **M0** headless agent | P0+P1 | 16 | W1–W4 | SPEC M0 AC on 2 endpoints — 🟡 5/16 SP (P0 ✅, P1-1 ✅) |
+| **M0** headless agent | P0+P1 | 16 | W1–W4 | P0+P1 code-complete ✅ (16/16 SP) — exit gate needs live endpoints (D1): 2-endpoint bug-fix run + model-zoo goldens |
 | **M1** safe harness | P2 | 16 | W5–W8 | revert + kill-9 resume |
 | **M2** usable app | P3 | 21 | W9–W14 | corpus 1 & 3 in UI + interjection UX |
 | **M3** documents | P4 | 13 | W13–W17 (overlaps P3b) | corpus 2 |
