@@ -2,7 +2,10 @@
 
 **Version:** 0.1 · **Date:** 2026-11-24 · **Companion to:** [`SPEC.md`](SPEC.md) (v0.2)
 
-> **Progress (2026-11-25):** ✅ P0 · ✅ P1 · ✅ **P2 (all: P2-1 … P2-9)** — durable
+> **Progress (2026-11-25):** ✅ P0 · ✅ P1 · ✅ **P2 (all: P2-1 … P2-9)** · ✅ SearXNG
+> web search (SPEC §9.5 made normative: remote instance support, JSON-API client,
+> `genisys search test` probe, `web_search` tool — M4 item pulled forward) · 🟡 P3.
+> Earlier milestone: durable
 > sessions (sqlite + jsonl transcript + resume), enforced workspace permissions,
 > shadow-git checkpoints with `genisys revert`, mutation tools, CLI permission cards.
 > Earlier: ✅ **P1 (all)** — headless

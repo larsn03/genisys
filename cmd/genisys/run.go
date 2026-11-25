@@ -30,10 +30,14 @@ import (
 	"github.com/larsn03/genisys/internal/tools/mutate"
 	"github.com/larsn03/genisys/internal/tools/perms"
 	"github.com/larsn03/genisys/internal/tools/search"
+	"github.com/larsn03/genisys/internal/tools/web"
+	"github.com/larsn03/genisys/internal/websearch"
 	"github.com/larsn03/genisys/internal/workspace"
 )
 
-func fullRegistry() *tools.Registry {
+// fullRegistry assembles the tool surface; web_search is registered only
+// when enabled AND configured (SPEC §9.5: hidden from schema otherwise).
+func fullRegistry(cfg *apiconfig.Config) *tools.Registry {
 	r := tools.NewRegistry()
 	r.Add(fileio.ReadLines{})
 	r.Add(fileio.ReadChars{})
@@ -50,7 +54,29 @@ func fullRegistry() *tools.Registry {
 	r.Add(perms.ReadOnlyAccess())
 	r.Add(perms.ReadWriteAccess())
 	r.Add(perms.ScratchpadFolder{})
+	if c := websearchFromConfig(cfg); c != nil {
+		r.Add(web.Search{C: c})
+	}
 	return r
+}
+
+// websearchFromConfig builds the SearXNG client or nil.
+func websearchFromConfig(cfg *apiconfig.Config) *websearch.Client {
+	if !cfg.Web.SearchEnabled || cfg.Web.Provider != "searxng" || cfg.Web.Searxng.BaseURL == "" {
+		return nil
+	}
+	c, err := websearch.New(websearch.Config{
+		BaseURL:          cfg.Web.Searxng.BaseURL,
+		Language:         cfg.Web.Searxng.Language,
+		Categories:       cfg.Web.Searxng.Categories,
+		TimeoutMs:        cfg.Web.Searxng.TimeoutMs,
+		APIKeyEnv:        cfg.Web.Searxng.APIKeyEnv,
+		AllowInsecureTLS: cfg.Web.Searxng.AllowInsecureTLS,
+	})
+	if err != nil {
+		return nil
+	}
+	return c
 }
 
 // genRoot is ~/.genisys (overridable with --db's directory for tests).
@@ -292,7 +318,7 @@ func runREPL(o runOpts) error {
 	defer tr.Close()
 
 	deps := agent.Deps{
-		Client: client, Model: ref, Tools: fullRegistry(), ToolsMode: mode,
+		Client: client, Model: ref, Tools: fullRegistry(b.cfg), ToolsMode: mode,
 		MaxSteps: b.cfg.Agent.MaxSteps, ShellTimeout: b.cfg.Agent.ShellTimeoutMs,
 		Cwd: cwd, Scratchpad: scratch, Events: sink,
 		SessionID: sess.ID, Transcript: tr, DB: b.db, ProjectID: proj.ID,

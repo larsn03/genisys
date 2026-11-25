@@ -125,7 +125,7 @@ ui: { theme: hotdog }
 		"duplicate model id",
 		"default_model",
 		"interjection.default_mode",
-		"searxng_url is empty",
+		"web.searxng.base_url is empty",
 		"ui.theme",
 	}
 	joined := issues.Error()

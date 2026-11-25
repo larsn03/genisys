@@ -67,9 +67,20 @@ type InterjectionConfig struct {
 
 // WebConfig maps to SPEC §18.2 web block.
 type WebConfig struct {
-	SearchEnabled bool   `yaml:"search_enabled"`
-	Provider      string `yaml:"provider"` // searxng | tavily | brave | none
-	SearxngURL    string `yaml:"searxng_url"`
+	SearchEnabled bool          `yaml:"search_enabled"`
+	Provider      string        `yaml:"provider"` // searxng | tavily | brave | none
+	Searxng       SearxngConfig `yaml:"searxng"`
+}
+
+// SearxngConfig configures the default search backend: any reachable
+// SearXNG instance, local or remote (SPEC §9.5).
+type SearxngConfig struct {
+	BaseURL          string `yaml:"base_url"`    // required when provider=searxng
+	Language         string `yaml:"language"`    // "auto"/"" = instance default
+	Categories       string `yaml:"categories"`  // instance syntax
+	TimeoutMs        int    `yaml:"timeout_ms"`  // default 10000
+	APIKeyEnv        string `yaml:"api_key_env"` // optional bearer token env var
+	AllowInsecureTLS bool   `yaml:"allow_insecure_tls"`
 }
 
 // MCPServer maps to SPEC §15 / §18.2 mcp_servers entries.
@@ -177,6 +188,12 @@ func (c *Config) WithDefaults() *Config {
 		} else {
 			c.Web.Provider = "none"
 		}
+	}
+	if c.Web.Searxng.TimeoutMs == 0 {
+		c.Web.Searxng.TimeoutMs = 10000
+	}
+	if c.Web.Searxng.Language == "" {
+		c.Web.Searxng.Language = "auto"
 	}
 	if c.UI.Theme == "" {
 		c.UI.Theme = "system"

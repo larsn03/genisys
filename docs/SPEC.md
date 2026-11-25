@@ -227,6 +227,7 @@ Genisys mirrors Bionic's two personas, expressed purely as prompt + tool-visibil
 | **General** | Default (root) model; reasoning effort default; Web Search toggle; UI theme (light/dark/system); workspace storage root |
 | **Endpoints** | CRUD endpoints: name, base URL, API key (secret), model overrides, context window override, max output tokens, temperature, streaming on/off, "Test connection" (probes `/v1/models` + 1-token completion) |
 | **Skills** | List installed skills (enable/disable); "Add skill" (path or URL); "Use skills found in other apps" (scans `~/.claude/skills`, `~/.codex/skills`, etc.) |
+| **Web Search** | Toggle; provider (SearXNG default); instance URL (any host, §9.5); language; categories; timeout; bearer-token env var; insecure-TLS toggle; "Test connection" (live round-trip classified ok / json-disabled / auth-required / unreachable / not-searxng) |
 | **Browser** | Allowed origins for the in-app browser |
 | **Voice** *(future)* | STT backend selection |
 
@@ -541,6 +542,38 @@ Spawn read-only sub-agent(s) to **locate** things (not to investigate/research).
 ```
 Returns numbered results: title, URL, snippet (≤400 chars). Backend pluggable (SearXNG instance default; Tavily/Brave via config). Disabled entirely when Settings → Web Search is off (tool hidden from schema).
 
+##### SearXNG backend (default, normative)
+
+Genisys talks to **any reachable SearXNG instance** — same machine or remote — over its JSON API:
+
+```
+GET {web.searxng.base_url}/search?q=<urlencoded query>&format=json[&language=<cfg>][&categories=<cfg>]
+```
+
+- **JSON must be enabled on the instance** (`search.formats: [..., json]` in
+  `settings.yml`); many public instances disable it. A 403 or an HTML
+  response is reported as an actionable error ("add `- json` to
+  `search.formats` in the instance's settings.yml and restart it") —
+  Genisys never silently falls back to another provider.
+- All queries (≤5) run against the instance with **max 2 concurrent
+  requests**; results are merged, deduplicated by normalized URL
+  (scheme/host/case-insensitive, tracking params stripped), interleaved
+  round-robin in per-query rank order, then numbered. Snippets truncate at
+  400 chars on a word boundary.
+- Per-request budget `web.searxng.timeout_ms` (default 10 000); transient
+  failures (connect, 5xx) retried once per §13.3. Successful result sets
+  are cached 24 h keyed by the normalized query set (§16).
+- **Privacy:** queries go only to the configured instance — no third-party
+  fallback, no telemetry. Optional bearer token: `api_key_env` names an
+  environment variable whose value is sent as `Authorization: Bearer <v>`.
+  `allow_insecure_tls: true` accepts self-signed internal instances.
+- **Reachability check:** Settings → Web Search "Test connection" and
+  `genisys search test` perform one live round-trip
+  (`/search?q=genisys&format=json`) and classify the result:
+  `ok | json-disabled | auth-required | unreachable | not-searxng`.
+- Language/categories are omitted from the request when `auto`/empty, so
+  the instance's own defaults apply.
+
 #### `web_extract`
 ```json
 {"properties":{"urls":{"type":"array","minItems":1,"maxItems":20},
@@ -698,7 +731,7 @@ Assistant text is stripped of tool-call syntax before rendering. Tool-call ids a
 
 ## 16. Web Access
 
-- `web_search` backend: pluggable provider (`searxng` default with instance URL, `tavily`, `brave`, `none`). Results cached 24 h keyed by query set.
+- `web_search` backend: pluggable provider (`searxng` default — any reachable instance, local or remote, per §9.5; `tavily`, `brave`, `none`). Results cached 24 h keyed by query set.
 - `web_extract`: HTTP GET (10 s timeout, 5 MB cap, redirects ≤3), readability → markdown, HTML tables preserved. JS-heavy pages: optional Playwright fallback (off by default).
 - Privacy: extraction happens client-side (no third-party extractor API) unless a provider requires it; web tools are fully disabled by the Settings toggle.
 
@@ -769,7 +802,13 @@ agent:
 web:
   search_enabled: true
   provider: searxng                         # searxng | tavily | brave | none
-  searxng_url: http://localhost:8888
+  searxng:                                  # any reachable instance (§9.5)
+    base_url: "http://192.168.1.20:8888"    # required when provider=searxng
+    language: auto                          # omitted from request when auto
+    categories: general                     # instance syntax, comma-separated
+    timeout_ms: 10000                       # per-request budget
+    api_key_env: ""                         # optional bearer-token env var
+    allow_insecure_tls: false               # self-signed internal instances
 
 mcp_servers: []                             # §15
 browser: { allowed_origins: [] }

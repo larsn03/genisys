@@ -185,8 +185,13 @@ func ValidateApp(c *Config, file string) []Issue {
 	if bad := domainIssue("web.provider", c.Web.Provider); bad != "" {
 		add(0, "web: "+bad)
 	}
-	if c.Web.SearchEnabled && c.Web.Provider == "searxng" && c.Web.SearxngURL == "" {
-		add(0, "web: provider is searxng and search is enabled but searxng_url is empty")
+	if c.Web.SearchEnabled && c.Web.Provider == "searxng" {
+		u := c.Web.Searxng.BaseURL
+		if u == "" {
+			add(0, "web: provider is searxng and search is enabled but web.searxng.base_url is empty (any reachable instance counts, see SPEC §9.5)")
+		} else if !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://") {
+			add(0, fmt.Sprintf("web.searxng.base_url %q must start with http:// or https://", u))
+		}
 	}
 	for _, s := range c.MCPServers {
 		if bad := domainIssue("mcp.transport", s.Transport); bad != "" {
