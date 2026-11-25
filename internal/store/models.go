@@ -491,3 +491,10 @@ func (db *DB) SetSessionPinned(id string, pinned bool) error {
 	_, err := db.h.Exec(`UPDATE sessions SET pinned=?, updated_at=? WHERE id=?`, pinned, nowStamp(), id)
 	return err
 }
+
+// SetSessionModel switches the model reference of a session (model
+// picker; takes effect on the next turn).
+func (db *DB) SetSessionModel(id, ref string) error {
+	_, err := db.h.Exec(`UPDATE sessions SET model_ref=?, updated_at=? WHERE id=?`, ref, nowStamp(), id)
+	return err
+}

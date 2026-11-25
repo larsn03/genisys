@@ -72,4 +72,26 @@ export type Item =
       mode: string;
       state: "pending" | "delivered";
     }
-  | { kind: "error"; id: string; text: string };
+  | { kind: "error"; id: string; text: string }
+  | { kind: "interrupt"; id: string; step: string };
+
+export interface ModelInfo {
+  ref: string;
+  endpoint: string;
+  model: string;
+  context_window: number;
+}
+
+export interface GitStatus {
+  repo: boolean;
+  branch?: string;
+  files?: Record<string, string>;
+}
+
+export interface CheckpointRow {
+  id: number;
+  step_id: string;
+  sha: string;
+  label: string;
+  created_at: string;
+}

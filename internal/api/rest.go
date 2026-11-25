@@ -14,6 +14,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/go-git/go-git/v5"
+
 	"github.com/larsn03/genisys/internal/apiconfig"
 	"github.com/larsn03/genisys/internal/app"
 	"github.com/larsn03/genisys/internal/store"
@@ -26,6 +28,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"name": "genisys", "version": Version})
 	})
+	m.HandleFunc("GET /api/models", s.listModels)
 	m.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{
 			"running": s.Sup.RunningSessions(), "queued": s.Sup.Queued(), "cap": s.Sup.Cap,
@@ -55,6 +58,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/sessions/{id}/interjections/{ij}/{op}", s.interjectionOp)
 	m.HandleFunc("POST /api/sessions/{id}/permissions/{pid}", s.answerPermission)
 	m.HandleFunc("GET /api/sessions/{id}/checkpoints", s.listCheckpoints)
+	m.HandleFunc("GET /api/sessions/{id}/git-status", s.gitStatus)
 	m.HandleFunc("POST /api/sessions/{id}/revert", s.revert)
 	m.HandleFunc("GET /api/sessions/{id}/files", s.listFiles)
 	m.HandleFunc("GET /api/sessions/{id}/file", s.getFile)
@@ -229,12 +233,19 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Title  *string `json:"title"`
-		Pinned *bool   `json:"pinned"`
+		Title    *string `json:"title"`
+		Pinned   *bool   `json:"pinned"`
+		ModelRef *string `json:"model_ref"`
 	}
 	if err := readJSON(r, &in); err != nil {
 		writeErr(w, 400, err.Error())
 		return
+	}
+	if in.ModelRef != nil {
+		if err := s.App.DB.SetSessionModel(row.ID, *in.ModelRef); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
 	}
 	if in.Title != nil {
 		s.App.DB.SetSessionTitle(row.ID, *in.Title)
@@ -594,4 +605,76 @@ func relPath(cwd, rel string) string {
 		return rel
 	}
 	return filepath.Join(cwd, filepath.FromSlash(rel))
+}
+
+// listModels exposes the configured endpoint zoo for the composer's
+// model chip (SPEC §5.3).
+func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
+	type mi struct {
+		Ref           string `json:"ref"`
+		Endpoint      string `json:"endpoint"`
+		Model         string `json:"model"`
+		ContextWindow int    `json:"context_window"`
+	}
+	var out []mi
+	for _, ep := range s.App.Cfg.Endpoints {
+		for _, m := range ep.Models {
+			out = append(out, mi{
+				Ref: ep.ID + "/" + m.ID, Endpoint: ep.ID, Model: m.ID, ContextWindow: m.ContextWindow,
+			})
+		}
+	}
+	writeJSON(w, 200, map[string]any{"default": s.App.Cfg.DefaultModel, "models": out})
+}
+
+// gitStatus returns per-file VCS badges for the session's workspace
+// (FilesTree badges, SPEC §5.4). {repo:false} when not a git checkout.
+func (s *Server) gitStatus(w http.ResponseWriter, r *http.Request) {
+	row := s.sessionRow(w, r)
+	if row == nil {
+		return
+	}
+	if row.ProjectID == "" {
+		writeJSON(w, 200, map[string]any{"repo": false})
+		return
+	}
+	proj, err := s.App.DB.GetProject(row.ProjectID)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	repo, err := git.PlainOpen(proj.WorkspacePath)
+	if err != nil {
+		writeJSON(w, 200, map[string]any{"repo": false})
+		return
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		writeJSON(w, 200, map[string]any{"repo": false})
+		return
+	}
+	st, err := wt.Status()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	badges := map[string]string{}
+	for path, cs := range st {
+		code := ""
+		if cs.Staging != 0 {
+			code += string(cs.Staging)
+		}
+		if cs.Worktree != 0 {
+			code += string(cs.Worktree)
+		}
+		if code == "" {
+			code = "M"
+		}
+		badges[path] = code
+	}
+	head := ""
+	if ref, err := repo.Head(); err == nil {
+		head = ref.Name().Short()
+	}
+	writeJSON(w, 200, map[string]any{"repo": true, "branch": head, "files": badges})
 }

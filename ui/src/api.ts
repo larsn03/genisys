@@ -43,6 +43,10 @@ export const api = {
     }).then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status))))),
   putFile: (id: string, path: string, content: string) =>
     req<{ ok: boolean }>("PUT", `/api/sessions/${id}/file?path=${encodeURIComponent(path)}`, { content }),
+  models: () =>
+    req<{ default: string; models: import("./types").ModelInfo[] }>("GET", "/api/models"),
+  gitStatus: (id: string) =>
+    req<import("./types").GitStatus>("GET", `/api/sessions/${id}/git-status`),
   checkpoints: (id: string) =>
     req<{ id: number; step_id: string; sha: string; label: string; created_at: string }[]>(
       "GET",

@@ -151,6 +151,10 @@ export function reduceEvent(items: Item[], ev: WSEvent): Item[] {
       }
       break;
     }
+    case "interrupt_started": {
+      out.push({ kind: "interrupt", id: nid(), step });
+      break;
+    }
     case "session_error": {
       closeSteps(out);
       out.push({ kind: "error", id: nid(), text: str(p, "error") });

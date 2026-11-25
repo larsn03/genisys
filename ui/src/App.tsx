@@ -1,10 +1,12 @@
 // Three-pane shell (SPEC §5.1): SessionRail · MessageStream+Composer ·
-// Files/Editor. Bionic-style dark chrome.
+// Files/Editor/History. Resizable + collapsible panes persisted to
+// localStorage (P3-9). Bionic-style dark chrome.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useStore } from "./store";
 import { MessageStream } from "./components/MessageStream";
 import { Composer } from "./components/Composer";
+import { RightPanel } from "./components/RightPanel";
 
 export default function App() {
   const sessions = useStore((s) => s.sessions);
@@ -16,20 +18,27 @@ export default function App() {
   const connected = useStore((s) => s.connected);
   const running = useStore((s) => s.running);
   const error = useStore((s) => s.error);
+  const layout = useStore((s) => s.layout);
+  const setLayout = useStore((s) => s.setLayout);
+  const loadModels = useStore((s) => s.loadModels);
 
   useEffect(() => {
+    void loadModels();
     void refresh();
     const t = setInterval(() => void useStore.getState().refreshSessions(), 5000);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [refresh, loadModels]);
 
   const sess = sessions.find((s) => s.id === current);
 
   return (
-    <div className="h-full flex">
+    <div className="h-full flex min-w-0">
       {/* left rail */}
-      <aside className="w-60 shrink-0 border-r border-line bg-panel/50 flex flex-col">
-        <div className="px-4 py-3.5 flex items-center gap-2">
+      <aside
+        className="shrink-0 border-r border-line bg-panel/50 flex flex-col overflow-hidden"
+        style={{ width: layout.leftOpen ? layout.left : 0, borderWidth: layout.leftOpen ? 1 : 0 }}
+      >
+        <div className="px-4 py-3.5 flex items-center gap-2 min-w-60">
           <span className="text-lg">⚡</span>
           <span className="font-semibold tracking-tight">Genisys</span>
           <span
@@ -39,11 +48,11 @@ export default function App() {
         </div>
         <button
           onClick={() => void create()}
-          className="mx-3 mb-2 px-3 py-2 rounded-xl bg-accent/90 hover:bg-accent text-white text-[13px] font-medium"
+          className="mx-3 mb-2 px-3 py-2 rounded-xl bg-accent/90 hover:bg-accent text-white text-[13px] font-medium min-w-54"
         >
           + New session
         </button>
-        <div className="flex-1 overflow-y-auto px-2 pb-3 flex flex-col gap-0.5">
+        <div className="flex-1 overflow-y-auto px-2 pb-3 flex flex-col gap-0.5 min-w-54">
           {sessions.map((s) => (
             <div
               key={s.id}
@@ -80,12 +89,27 @@ export default function App() {
         </div>
       </aside>
 
+      <DragEdge
+        onDrag={(dx) =>
+          setLayout({ left: Math.min(420, Math.max(160, useStore.getState().layout.left + dx)) })
+        }
+        hidden={!layout.leftOpen}
+        label="‹"
+      />
+
       {/* center */}
       <main className="flex-1 min-w-0 flex flex-col relative">
+        <button
+          onClick={() => setLayout({ leftOpen: !layout.leftOpen })}
+          className="absolute top-3 left-2 z-10 text-faint hover:text-ink text-xs px-1"
+          title={`${layout.leftOpen ? "Collapse" : "Expand"} sessions rail`}
+        >
+          {layout.leftOpen ? "⟨" : "⟩"} sessions
+        </button>
         {current ? (
           <>
             <header className="px-6 py-3 border-b border-line flex items-center gap-3 text-xs text-mute">
-              <span className="text-ink text-sm font-medium truncate">
+              <span className="text-ink text-sm font-medium truncate pl-12">
                 {sess?.title ?? "…"}
               </span>
               <span className="font-mono">{sess?.model_ref}</span>
@@ -107,11 +131,32 @@ export default function App() {
       </main>
 
       {/* right panel */}
-      {current && <RightPanel />}
+      {current && layout.rightOpen && (
+        <>
+          <DragEdge
+            flip
+            onDrag={(dx) =>
+              setLayout({
+                right: Math.min(720, Math.max(280, useStore.getState().layout.right - dx)),
+              })
+            }
+          />
+          <RightPanel />
+        </>
+      )}
+      {current && (
+        <button
+          onClick={() => setLayout({ rightOpen: !layout.rightOpen })}
+          className="absolute top-3 right-2 z-10 text-faint hover:text-ink text-xs px-1"
+          title={`${layout.rightOpen ? "Collapse" : "Open"} workspace panel`}
+        >
+          {layout.rightOpen ? "⟩" : "⟨"} files
+        </button>
+      )}
 
       {error && (
         <div
-          className="fixed bottom-4 right-4 max-w-md border border-err/40 bg-panel rounded-xl px-4 py-3 text-sm text-err shadow-xl"
+          className="fixed bottom-4 right-4 max-w-md border border-err/40 bg-panel rounded-xl px-4 py-3 text-sm text-err shadow-xl cursor-pointer z-50"
           onClick={() => useStore.setState({ error: null })}
         >
           {error} ✕
@@ -121,84 +166,39 @@ export default function App() {
   );
 }
 
-function RightPanel() {
-  const files = useStore((s) => s.files);
-  const refreshFiles = useStore((s) => s.refreshFiles);
-  const openFile = useStore((s) => s.openFile);
-  const filePath = useStore((s) => s.filePath);
-  const fileContent = useStore((s) => s.fileContent);
-  const saveFile = useStore((s) => s.saveFile);
-  const [draft, setDraft] = useState("");
-  const [tab, setTab] = useState<"files" | "editor">("files");
-
-  useEffect(() => setDraft(fileContent), [fileContent]);
-
+function DragEdge({
+  onDrag,
+  flip,
+  hidden,
+  label,
+}: {
+  onDrag: (dx: number) => void;
+  flip?: boolean;
+  hidden?: boolean;
+  label?: string;
+}) {
+  const [active, setActive] = useState(false);
+  const last = useRef(0);
+  if (hidden) return null;
   return (
-    <aside className="w-96 shrink-0 border-l border-line bg-panel/50 flex flex-col">
-      <div className="flex border-b border-line text-[13px]">
-        {(["files", "editor"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-4 py-2.5 capitalize ${
-              tab === t ? "text-ink border-b-2 border-accent" : "text-faint hover:text-mute"
-            }`}
-          >
-            {t}
-            {t === "editor" && filePath && (
-              <span className="ml-1.5 text-faint font-mono text-xs">
-                {filePath.split("/").pop()}
-              </span>
-            )}
-          </button>
-        ))}
-        <button
-          onClick={() => void refreshFiles()}
-          className="ml-auto px-3 text-faint hover:text-ink"
-          title="Refresh"
-        >
-          ⟳
-        </button>
-      </div>
-      {tab === "files" ? (
-        <div className="flex-1 overflow-y-auto p-2 font-mono text-[13px]">
-          {files.map((f) => (
-            <div
-              key={f.name}
-              onClick={() =>
-                f.is_dir ? void refreshFiles(f.name) : void (openFile(f.name), setTab("editor"))
-              }
-              className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-panel2 cursor-pointer"
-            >
-              <span className={f.is_dir ? "text-accent2" : "text-faint"}>
-                {f.is_dir ? "▸" : "·"}
-              </span>
-              <span className="truncate flex-1">{f.name}</span>
-              {!f.is_dir && <span className="text-faint text-xs">{f.size}B</span>}
-            </div>
-          ))}
-          {!files.length && <div className="text-faint text-xs p-2">Empty workspace.</div>}
-        </div>
-      ) : (
-        <div className="flex-1 flex flex-col">
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            className="flex-1 bg-transparent outline-none resize-none p-3 font-mono text-[12.5px] leading-relaxed"
-            spellCheck={false}
-          />
-          <div className="p-2 border-t border-line flex gap-2">
-            <button
-              onClick={() => void saveFile(draft)}
-              disabled={draft === fileContent}
-              className="px-3 py-1.5 rounded-lg bg-accent text-white text-[13px] disabled:opacity-40"
-            >
-              Save
-            </button>
-            {draft !== fileContent && <span className="text-warn text-xs self-center">modified</span>}
-          </div>
-        </div>
-      )}
-    </aside>
+    <div
+      onPointerDown={(e) => {
+        e.preventDefault();
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        setActive(true);
+        last.current = e.clientX;
+      }}
+      onPointerMove={(e) => {
+        if (!active) return;
+        const dx = e.clientX - last.current;
+        last.current = e.clientX;
+        if (dx) onDrag(flip ? -dx : dx);
+      }}
+      onPointerUp={() => setActive(false)}
+      className={`w-1 shrink-0 cursor-col-resize hover:bg-accent/40 transition-colors ${
+        active ? "bg-accent/60" : ""
+      }`}
+      title={`drag to resize${label ? ` (${label})` : ""}`}
+    />
   );
 }

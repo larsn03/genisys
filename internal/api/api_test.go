@@ -262,6 +262,40 @@ func TestCRUD(t *testing.T) {
 	e.mustJSON(t, "GET", "/api/sessions/"+sess.ID, nil, nil)
 }
 
+func TestModelsAndGitStatus(t *testing.T) {
+	e := newEnv(t, []string{sseText("x")}, 0)
+	var models struct {
+		Default string `json:"default"`
+		Models  []struct {
+			Ref string `json:"ref"`
+		} `json:"models"`
+	}
+	e.mustJSON(t, "GET", "/api/models", nil, &models)
+	if models.Default != "mock/m1" || len(models.Models) != 1 || models.Models[0].Ref != "mock/m1" {
+		t.Fatalf("models = %+v", models)
+	}
+	sid := e.newSession(t)
+	// switch model via PATCH
+	e.mustJSON(t, "PATCH", "/api/sessions/"+sid, map[string]any{"model_ref": "mock/m1"}, nil)
+	// git badges: init a repo in the workspace
+	var sess struct {
+		ProjectID string `json:"project_id"`
+	}
+	e.mustJSON(t, "GET", "/api/sessions/"+sid, nil, &struct {
+		Session map[string]any `json:"session"`
+	}{})
+	_ = sess
+	var gs struct {
+		Repo   bool              `json:"repo"`
+		Branch string            `json:"branch"`
+		Files  map[string]string `json:"files"`
+	}
+	e.mustJSON(t, "GET", "/api/sessions/"+sid+"/git-status", nil, &gs)
+	if gs.Repo {
+		t.Fatalf("expected repo:false for plain dir, got %+v", gs)
+	}
+}
+
 // P3-1: prompt → tools → events ledger → messages, all over REST.
 func TestPromptFlow(t *testing.T) {
 	e := newEnv(t, []string{
@@ -404,7 +438,20 @@ func TestFilesEndpoints(t *testing.T) {
 	var cps []map[string]any
 	e.mustJSON(t, "GET", "/api/sessions/"+sid+"/checkpoints", nil, &cps)
 	if len(cps) == 0 {
-		t.Error("editor write created no checkpoint")
+		t.Fatal("editor write created no checkpoint")
+	}
+
+	// P3-11: revert the editor step → file content comes back
+	var rev struct {
+		Reverted []string `json:"reverted"`
+	}
+	e.mustJSON(t, "POST", "/api/sessions/"+sid+"/revert", map[string]any{"step_id": "editor"}, &rev)
+	if len(rev.Reverted) != 1 || rev.Reverted[0] != "a.txt" {
+		t.Errorf("revert = %+v", rev)
+	}
+	b, _ = os.ReadFile(filepath.Join(e.wsdir, "a.txt"))
+	if string(b) != "hello\n" {
+		t.Errorf("after revert file = %q", b)
 	}
 }
 

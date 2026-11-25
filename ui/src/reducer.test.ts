@@ -104,6 +104,20 @@ describe("reduceEvent", () => {
     expect(ij.state).toBe("delivered");
   });
 
+  it("interrupt_started renders the confirmation card", () => {
+    let items: Item[] = [];
+    for (const e of [
+      ev("step_started", { step: "step_1" }),
+      ev("interjection_queued", { id: "ij_1", text: "stop", mode: "interrupt" }),
+      ev("interrupt_started", { step: "step_1" }),
+      ev("interjection_delivered", { id: "ij_1", boundary: "interrupt" }),
+    ])
+      items = reduceEvent(items, e);
+    expect(all(items, "interrupt")).toHaveLength(1);
+    const ij = all(items, "interjection")[0] as Extract<Item, { kind: "interjection" }>;
+    expect(ij.state).toBe("delivered");
+  });
+
   it("session_error closes open steps", () => {
     let items: Item[] = [];
     for (const e of [

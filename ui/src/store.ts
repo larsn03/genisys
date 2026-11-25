@@ -5,32 +5,70 @@
 import { create } from "zustand";
 import { api } from "./api";
 import { itemsFromMessages, reduceEvent } from "./reducer";
-import { WSConn, type Command } from "./ws";
-import type { Item, SessionRow } from "./types";
+import { WSConn } from "./ws";
+import type { CheckpointRow, GitStatus, Item, ModelInfo, SessionRow } from "./types";
+
+interface PaneState {
+  left: number;
+  right: number;
+  leftOpen: boolean;
+  rightOpen: boolean;
+}
+
+const LAYOUT_KEY = "genisys.layout";
+const loadLayout = (): PaneState => {
+  try {
+    return { left: 240, right: 384, leftOpen: true, rightOpen: true, ...JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? "{}") };
+  } catch {
+    return { left: 240, right: 384, leftOpen: true, rightOpen: true };
+  }
+};
 
 interface State {
   sessions: SessionRow[];
   current: string | null;
   items: Item[];
+  showAll: boolean; // windowing escape hatch (long replays)
   running: boolean;
   connected: boolean;
+
   files: { name: string; is_dir: boolean; size: number }[];
+  dirPath: string;
+  git: GitStatus | null;
   filePath: string;
   fileContent: string;
+  checkpoints: CheckpointRow[];
+
+  models: ModelInfo[];
+  defaultModel: string;
+  contextTokens: number; // last prompt_tokens = live context size
+  contextWindow: number;
+
+  layout: PaneState;
   error: string | null;
 
   refreshSessions: () => Promise<void>;
   select: (id: string) => Promise<void>;
   createSession: () => Promise<void>;
   archive: (id: string) => Promise<void>;
+  setModel: (ref: string) => Promise<void>;
+  loadModels: () => Promise<void>;
+
   send: (text: string, mode?: "queue" | "interrupt") => Promise<void>;
   stop: () => Promise<void>;
   answer: (permId: number, granted: boolean) => Promise<void>;
   withdraw: (ijId: string) => Promise<void>;
   promote: (ijId: string) => Promise<void>;
+
   refreshFiles: (path?: string) => Promise<void>;
   openFile: (path: string) => Promise<void>;
   saveFile: (content: string) => Promise<void>;
+  refreshGit: () => Promise<void>;
+  refreshCheckpoints: () => Promise<void>;
+  revertStep: (stepId: string) => Promise<void>;
+
+  setShowAll: (v: boolean) => void;
+  setLayout: (patch: Partial<PaneState>) => void;
   close: () => void;
 }
 
@@ -40,12 +78,33 @@ export const useStore = create<State>((set, get) => ({
   sessions: [],
   current: null,
   items: [],
+  showAll: false,
   running: false,
   connected: false,
+
   files: [],
+  dirPath: "",
+  git: null,
   filePath: "",
   fileContent: "",
+  checkpoints: [],
+
+  models: [],
+  defaultModel: "",
+  contextTokens: 0,
+  contextWindow: 32768,
+
+  layout: loadLayout(),
   error: null,
+
+  async loadModels() {
+    try {
+      const { default: d, models } = await api.models();
+      set({ models, defaultModel: d });
+    } catch {
+      /* endpoint-less config */
+    }
+  },
 
   async refreshSessions() {
     try {
@@ -60,12 +119,18 @@ export const useStore = create<State>((set, get) => ({
   async select(id) {
     conn?.close();
     const rows = await api.messages(id).catch(() => []);
+    const sess = get().sessions.find((s) => s.id === id);
     set({
       current: id,
       items: itemsFromMessages(rows),
+      showAll: false,
       running: false,
       filePath: "",
       fileContent: "",
+      dirPath: "",
+      contextTokens: 0,
+      contextWindow:
+        get().models.find((m) => m.ref === sess?.model_ref)?.context_window || 32768,
     });
     conn = new WSConn(
       id,
@@ -76,13 +141,21 @@ export const useStore = create<State>((set, get) => ({
           const st = String(ev.payload?.status ?? "");
           patch.running = st === "running" || st === "waiting_permission";
         }
-        if (ev.type === "file_changed" && s.current === id) void get().refreshFiles();
+        if (ev.type === "usage") {
+          patch.contextTokens = Number(ev.payload?.prompt_tokens ?? 0) || s.contextTokens;
+        }
+        if (ev.type === "file_changed" && s.current === id) {
+          void get().refreshFiles(s.dirPath);
+          void get().refreshGit();
+        }
         set(patch);
       },
       (up) => set({ connected: up }),
     );
     conn.connect();
-    void get().refreshFiles();
+    void get().refreshFiles("");
+    void get().refreshGit();
+    void get().refreshCheckpoints();
   },
 
   async createSession() {
@@ -98,6 +171,16 @@ export const useStore = create<State>((set, get) => ({
       conn?.close();
       set({ current: null, items: [] });
     }
+    await get().refreshSessions();
+  },
+
+  async setModel(ref) {
+    const id = get().current;
+    if (!id) return;
+    await api.patchSession(id, { model_ref: ref }).catch((e) => set({ error: String(e) }));
+    set({
+      contextWindow: get().models.find((m) => m.ref === ref)?.context_window || 32768,
+    });
     await get().refreshSessions();
   },
 
@@ -132,21 +215,68 @@ export const useStore = create<State>((set, get) => ({
 
   async withdraw(ijId) {
     const id = get().current;
-    if (id && ijId) await api.withdraw(id, ijId).catch(() => {});
+    if (id && ijId) {
+      await api.withdraw(id, ijId).catch(() => {});
+      set({
+        items: get().items.filter(
+          (it) => !(it.kind === "interjection" && it.ijId === ijId),
+        ),
+      });
+    }
   },
 
   async promote(ijId) {
     const id = get().current;
-    if (id && ijId) await api.promote(id, ijId).catch(() => {});
+    if (id && ijId) {
+      await api.promote(id, ijId).catch(() => {});
+      set({
+        items: get().items.map((it) =>
+          it.kind === "interjection" && it.ijId === ijId ? { ...it, mode: "interrupt" } : it,
+        ),
+      });
+    }
   },
 
   async refreshFiles(path = "") {
     const id = get().current;
     if (!id) return;
     try {
-      set({ files: await api.files(id, path) });
+      set({ files: await api.files(id, path), dirPath: path });
     } catch {
       set({ files: [] });
+    }
+  },
+
+  async refreshGit() {
+    const id = get().current;
+    if (!id) return;
+    try {
+      set({ git: await api.gitStatus(id) });
+    } catch {
+      set({ git: null });
+    }
+  },
+
+  async refreshCheckpoints() {
+    const id = get().current;
+    if (!id) return;
+    try {
+      set({ checkpoints: await api.checkpoints(id) });
+    } catch {
+      set({ checkpoints: [] });
+    }
+  },
+
+  async revertStep(stepId) {
+    const id = get().current;
+    if (!id) return;
+    try {
+      await api.revert(id, stepId);
+      set({ error: null });
+      void get().refreshFiles(get().dirPath);
+      void get().refreshGit();
+    } catch (e) {
+      set({ error: String(e) });
     }
   },
 
@@ -163,10 +293,20 @@ export const useStore = create<State>((set, get) => ({
   async saveFile(content) {
     const id = get().current;
     if (!id || !get().filePath) return;
-    await api.putFile(id, get().filePath, content).catch((e) => set({ error: String(e) }));
+    await api
+      .putFile(id, get().filePath, content)
+      .catch((e) => set({ error: String(e) }));
+    void get().refreshGit();
+    void get().refreshCheckpoints();
+  },
+
+  setShowAll: (v) => set({ showAll: v }),
+
+  setLayout: (patch) => {
+    const layout = { ...get().layout, ...patch };
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+    set({ layout });
   },
 
   close: () => conn?.close(),
 }));
-
-export type { Command };
