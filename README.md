@@ -62,9 +62,12 @@ Binaries and tarballs for `linux/amd64`, `linux/arm64`, `darwin/arm64` and
 `windows/amd64` are attached to each release:
 
 ```bash
-./genisys              # native window (window builds) / browser tab (portable builds)
+./genisys              # the desktop app — native window
 ./genisys serve        # headless server only — for remote access & scripting
 ```
+
+(The CGO-free `portable` tarballs have no webkit inside, so there the app
+opens a browser tab — a fallback for exotic hosts, not the intended UX.)
 
 macOS/Windows installers are planned; the binaries work fine today.
 
@@ -339,12 +342,14 @@ Requirements: Go ≥ 1.23, Node ≥ 20 (only to build the UI once — `ui/dist`
 is committed so plain `go build` works without Node).
 
 ```bash
-make ui        # node build → ui/dist (embedded into the binary via go:embed)
-make window    # native desktop app → ./genisys-window (needs gtk4-devel + webkitgtk6.0-devel)
-make build     # portable CGO-free build → ./genisys (browser flow, headless)
+make           # the desktop app → ./genisys
+               #   (CGO + Wails; needs gtk4-devel + webkitgtk6.0-devel)
+make ui        # web UI (node ≥ 20) → ui/dist, embedded via go:embed
+make portable  # CGO-free single binary → ./genisys-portable
+               #   (headless serve, cross-compiles, no system deps)
 make testrace  # full race test suite
-make e2e       # Playwright browser tests against a scripted mock endpoint
-make dist      # 4-OS tarballs + AppImage (needs appimagetool)
+make e2e       # Playwright tests against a scripted mock endpoint
+make dist      # 4-OS tarballs + desktop AppImage (needs appimagetool)
 ```
 
 ---
