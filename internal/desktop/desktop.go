@@ -34,7 +34,7 @@ func Run(o Options) error {
 		},
 	})
 
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
+	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             "main",
 		Title:            o.Title,
 		Width:            1440,
@@ -43,7 +43,9 @@ func Run(o Options) error {
 		MinHeight:        640,
 		URL:              o.URL,
 		BackgroundColour: application.NewRGBA(19, 20, 25, 255), // match --color-bg (dark)
-	}).Center().Show()
+	})
+	win.Center() // Center returns nothing (v3 API)
+	win.Show()
 
 	return app.Run()
 }
