@@ -1,0 +1,9 @@
+-- 0001_init down.
+
+DROP TABLE IF EXISTS permissions;
+DROP TABLE IF EXISTS checkpoints;
+DROP TABLE IF EXISTS events;
+DROP TABLE IF EXISTS messages;
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS projects;
+DROP TABLE IF EXISTS app_meta;
