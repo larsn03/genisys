@@ -20,6 +20,10 @@ const (
 	CheckpointReverted    = "checkpoint_reverted"
 	PermissionRequested   = "permission_requested"
 	PermissionResolved    = "permission_resolved"
+	UserTurn              = "user_turn"
+	InterjectionQueued    = "interjection_queued"
+	SessionError          = "session_error"
+	TranscriptRepaired    = "transcript_repaired"
 )
 
 // Event is one spine record.

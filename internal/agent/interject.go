@@ -121,6 +121,26 @@ func (q *Interjector) Withdraw(id string) bool {
 	return false
 }
 
+// Promote upgrades a queued interjection to interrupt mode (SPEC §5.3
+// chip: "promote to interrupt"). Returns false if the id is unknown or
+// already an interrupt.
+func (q *Interjector) Promote(id string) bool {
+	q.mu.Lock()
+	for i, ij := range q.queue {
+		if ij.ID == id && ij.Mode == ModeQueue {
+			q.queue[i].Mode = ModeInterrupt
+			q.mu.Unlock()
+			select {
+			case q.notify <- struct{}{}:
+			default:
+			}
+			return true
+		}
+	}
+	q.mu.Unlock()
+	return false
+}
+
 // Notify receives one signal per pending interrupt (level-ish: re-armed by
 // TakeInterrupts while interrupts remain).
 func (q *Interjector) Notify() <-chan struct{} { return q.notify }

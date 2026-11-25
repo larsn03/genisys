@@ -12,27 +12,27 @@ var ErrNotFound = errors.New("store: not found")
 
 // Project maps the projects table (SPEC §6.2).
 type Project struct {
-	ID            string
-	Name          string
-	Kind          string // work | code
-	WorkspacePath string
-	AllowCoding   bool
-	CreatedAt     string
-	SettingsJSON  string
+	ID            string `yaml:"-" json:"id"`
+	Name          string `yaml:"name" json:"name"`
+	Kind          string `yaml:"kind" json:"kind"` // work | code
+	WorkspacePath string `yaml:"workspace_path" json:"workspace_path"`
+	AllowCoding   bool   `yaml:"allow_coding" json:"allow_coding"`
+	CreatedAt     string `yaml:"-" json:"created_at"`
+	SettingsJSON  string `yaml:"-" json:"settings_json,omitempty"`
 }
 
 // Session maps the sessions table.
 type Session struct {
-	ID         string
-	ProjectID  string // "" = free chat
-	Title      string
-	Persona    string
-	ModelRef   string
-	Status     string
-	Pinned     bool
-	ForkedFrom string
-	CreatedAt  string
-	UpdatedAt  string
+	ID         string `yaml:"-" json:"id"`
+	ProjectID  string `yaml:"-" json:"project_id,omitempty"` // "" = free chat
+	Title      string `yaml:"title" json:"title"`
+	Persona    string `yaml:"persona" json:"persona"`
+	ModelRef   string `yaml:"model_ref" json:"model_ref"`
+	Status     string `yaml:"-" json:"status"`
+	Pinned     bool   `yaml:"pinned" json:"pinned"`
+	ForkedFrom string `yaml:"-" json:"forked_from,omitempty"`
+	CreatedAt  string `yaml:"-" json:"created_at"`
+	UpdatedAt  string `yaml:"-" json:"updated_at"`
 }
 
 // Session statuses (SPEC §6.2).
@@ -203,11 +203,11 @@ func (db *DB) ListMessages(sessionID string) ([]MessageRow, error) {
 
 // MessageRow is one messages-table entry.
 type MessageRow struct {
-	ID          int64
-	Role        string
-	ContentJSON string
-	StepID      string
-	CreatedAt   string
+	ID          int64  `json:"id"`
+	Role        string `json:"role"`
+	ContentJSON string `json:"content_json"`
+	StepID      string `json:"step_id,omitempty"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // --- events ledger (SPEC §21) --------------------------------------------------
@@ -250,11 +250,11 @@ func (db *DB) ListEvents(sessionID string) ([]EventRow, error) {
 
 // EventRow is one events-table entry.
 type EventRow struct {
-	ID          int64
-	StepID      string
-	Type        string
-	PayloadJSON string
-	CreatedAt   string
+	ID          int64  `json:"id"`
+	StepID      string `json:"step_id,omitempty"`
+	Type        string `json:"type"`
+	PayloadJSON string `json:"payload_json"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // --- checkpoints index ----------------------------------------------------------
@@ -272,13 +272,13 @@ func (db *DB) AppendCheckpoint(projectID, sessionID, stepID, sha, label string) 
 
 // CheckpointRow is one checkpoints-table entry.
 type CheckpointRow struct {
-	ID        int64
-	ProjectID string
-	SessionID string
-	StepID    string
-	SHA       string
-	Label     string
-	CreatedAt string
+	ID        int64  `json:"id"`
+	ProjectID string `json:"project_id,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	StepID    string `json:"step_id,omitempty"`
+	SHA       string `json:"sha"`
+	Label     string `json:"label"`
+	CreatedAt string `json:"created_at"`
 }
 
 // ListCheckpoints returns a project's checkpoint history, newest first.
@@ -431,4 +431,63 @@ func (db *DB) FindCheckpoint(projectID, sessionID, stepID string) (*CheckpointRo
 		return nil, err
 	}
 	return &c, nil
+}
+
+// ListEventsAfter returns the ledger for a session with id > after
+// (WS reconnect replay, SPEC §21).
+func (db *DB) ListEventsAfter(sessionID string, after int64) ([]EventRow, error) {
+	rows, err := db.h.Query(`SELECT id,COALESCE(step_id,''),type,payload_json,created_at
+		FROM events WHERE session_id=? AND id>? ORDER BY id`, sessionID, after)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []EventRow
+	for rows.Next() {
+		var e EventRow
+		if err := rows.Scan(&e.ID, &e.StepID, &e.Type, &e.PayloadJSON, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ListProjects returns all projects, newest first.
+func (db *DB) ListProjects() ([]*Project, error) {
+	rows, err := db.h.Query(`SELECT id,name,kind,workspace_path,allow_coding,created_at,settings_json FROM projects ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Project
+	for rows.Next() {
+		var p Project
+		var ac int
+		if err := rows.Scan(&p.ID, &p.Name, &p.Kind, &p.WorkspacePath, &ac, &p.CreatedAt, &p.SettingsJSON); err != nil {
+			return nil, err
+		}
+		p.AllowCoding = ac != 0
+		out = append(out, &p)
+	}
+	return out, rows.Err()
+}
+
+// DeleteProject removes a project (cascades sessions; transcript dirs are
+// swept by the caller).
+func (db *DB) DeleteProject(id string) error {
+	res, err := db.h.Exec(`DELETE FROM projects WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetSessionPinned pins/unpins a session.
+func (db *DB) SetSessionPinned(id string, pinned bool) error {
+	_, err := db.h.Exec(`UPDATE sessions SET pinned=?, updated_at=? WHERE id=?`, pinned, nowStamp(), id)
+	return err
 }

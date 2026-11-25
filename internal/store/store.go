@@ -147,6 +147,14 @@ func (db *DB) MigrateDown(to int) error {
 	return nil
 }
 
+// LastEventID returns the rowid of the most recent insert on this
+// connection (events ledger ids).
+func (db *DB) LastEventID() int64 {
+	var id int64
+	db.h.QueryRow(`SELECT last_insert_rowid()`).Scan(&id)
+	return id
+}
+
 // SchemaVersion returns the applied schema version.
 func (db *DB) SchemaVersion() int {
 	var v int

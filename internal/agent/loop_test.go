@@ -218,6 +218,7 @@ func TestInterruptKillsToolAndHonorsNewInstruction(t *testing.T) {
 		sseToolCall("c1", "shell_command", `{"command":"touch interrupted.marker; sleep 20; touch never.marker","timeout_ms":15000}`),
 		sseText("redirected"))
 	s := newSession(t, m, nil, "native", 8)
+	s.d.Cwd = t.TempDir() // isolated: this test writes into the workspace
 	var once sync.Once
 	s.d.Events = events.SinkFunc(func(e events.Event) {
 		if e.Type == events.ToolStarted {
@@ -247,8 +248,7 @@ func TestInterruptKillsToolAndHonorsNewInstruction(t *testing.T) {
 		t.Error("interrupt text not injected")
 	}
 	// workspace: first touch ran, post-sleep touch must not exist
-	cwd := fixtureCwd()
-	defer os.Remove(filepath.Join(cwd, "interrupted.marker"))
+	cwd := s.d.Cwd
 	if _, err := os.Stat(filepath.Join(cwd, "never.marker")); err == nil {
 		t.Error("process group survived the interrupt")
 	}

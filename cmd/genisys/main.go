@@ -39,7 +39,7 @@ func run(args []string) error {
 	case "search":
 		return searchCmd(args[1:])
 	case "serve":
-		return fmt.Errorf("serve is not implemented yet (see docs/IMPLEMENTATION.md)")
+		return serveCmd(args[1:])
 	case "help", "-h", "--help":
 		return usage()
 	default:
@@ -57,7 +57,7 @@ usage:
   genisys revert [--list] [--step <id>] [--session <id>]   roll back a step's files
   genisys search test              probe the configured SearXNG instance
   genisys version
-  genisys serve               (upcoming milestone)
+  genisys serve [--addr host:port]   web server (API + WS + UI)
 `)
 	return nil
 }

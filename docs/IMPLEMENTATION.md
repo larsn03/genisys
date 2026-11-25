@@ -4,7 +4,7 @@
 
 > **Progress (2026-11-25):** ✅ P0 · ✅ P1 · ✅ **P2 (all: P2-1 … P2-9)** · ✅ SearXNG
 > web search (SPEC §9.5 made normative: remote instance support, JSON-API client,
-> `genisys search test` probe, `web_search` tool — M4 item pulled forward) · 🟡 P3.
+> `genisys search test` probe, `web_search` tool — M4 item pulled forward) · ✅ P3a (server: REST + WS + supervisor + serve). 🟡 P3b (frontend).
 > Earlier milestone: durable
 > sessions (sqlite + jsonl transcript + resume), enforced workspace permissions,
 > shadow-git checkpoints with `genisys revert`, mutation tools, CLI permission cards.
@@ -334,13 +334,13 @@ into backend (P3a) and frontend (P3b) tracks that proceed in parallel after P3-2
 
 | Task | Description | SPEC | DoD | SP |
 |---|---|---|---|---|
-| P3-1 | `internal/api/rest.go`: CRUD projects/sessions/messages/files/settings/checkpoints; project create flow (work + code, folder pick via client) | §5.6, §6 | REST integration tests | 2 |
-| P3-2 | `internal/api/ws.go`: subscribe frames, typed event fan-out, `last_event_id` replay from ledger | §21 | reconnect-mid-step test replays gap-free | 2 |
-| P3-3 | `internal/supervisor`: goroutine worker registry, cancellable contexts, concurrency cap (4) + queue, orphan recovery | §19 | 5 concurrent sessions test; cap respected | 1.5 |
-| P3-4 | Interjection over the wire: `send_message {mode}`, promote/withdraw/reorder frames, queue state events | §7.4/§21 | e2e-ws tests for both modes incl. promote | 1.5 |
-| P3-5 | Permission + UI tools on the server: `permission_requested` round-trip, `open_file_in_side_editor`, `open_url_in_app_browser`, `attach_file`, `deliver_file_to_user` (events + file serving routes) | §9.6/§9.7 | card flows tested headlessly via ws client | 1 |
-| P3-6 | `api/static.go`: go:embed `ui/dist`, SPA fallback, localhost-only bind + bearer token (single-user auth) | §19/§22 | token required; 0.0.0.0 opt-in warns | 0.5 |
-| P3-7 | `genisys serve`: single command starts server + prints URL + opens browser | G12 | one-command dev & prod experience | 0.5 |
+| P3-1 ✅ | `internal/api/rest.go`: CRUD projects/sessions/messages/files/settings/checkpoints; project create flow (work + code, folder pick via client) | §5.6, §6 | REST integration tests | 2 |
+| P3-2 ✅ | `internal/api/ws.go`: subscribe frames, typed event fan-out, `last_event_id` replay from ledger | §21 | reconnect-mid-step test replays gap-free | 2 |
+| P3-3 ✅ | `internal/supervisor`: goroutine worker registry, cancellable contexts, concurrency cap (4) + queue, orphan recovery | §19 | 5 concurrent sessions test; cap respected | 1.5 |
+| P3-4 ✅ | Interjection over the wire: `send_message {mode}`, promote/withdraw/reorder frames, queue state events | §7.4/§21 | e2e-ws tests for both modes incl. promote | 1.5 |
+| P3-5 ✅ | Permission + UI tools on the server: `permission_requested` round-trip, `open_file_in_side_editor`, `open_url_in_app_browser`, `attach_file`, `deliver_file_to_user` (events + file serving routes) | §9.6/§9.7 | card flows tested headlessly via ws client | 1 |
+| P3-6 ✅ | `api/static.go`: go:embed `ui/dist`, SPA fallback, localhost-only bind + bearer token (single-user auth) | §19/§22 | token required; 0.0.0.0 opt-in warns | 0.5 |
+| P3-7 ✅ | `genisys serve`: single command starts server + prints URL + opens browser | G12 | one-command dev & prod experience | 0.5 |
 
 ### P3b — Frontend (12 SP)
 

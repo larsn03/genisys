@@ -1,14 +1,13 @@
 // run.go — `genisys run` (interactive REPL) and `genisys revert`
-// (checkpoint rollback). Wires config → store → workspace (grants, writer,
-// shadow checkpoints, permission broker) → agent session, and renders the
-// event spine in the terminal.
+// (checkpoint rollback). The REPL wires app.Open + App.OpenSession and
+// renders the event spine in the terminal; permission cards suspend the
+// REPL until the next input line answers them.
+
 package main
 
 import (
 	"bufio"
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,134 +21,11 @@ import (
 	"github.com/larsn03/genisys/internal/agent"
 	"github.com/larsn03/genisys/internal/agent/events"
 	"github.com/larsn03/genisys/internal/apiconfig"
+	"github.com/larsn03/genisys/internal/app"
 	"github.com/larsn03/genisys/internal/model"
 	"github.com/larsn03/genisys/internal/store"
-	"github.com/larsn03/genisys/internal/tools"
-	exectool "github.com/larsn03/genisys/internal/tools/exec"
-	"github.com/larsn03/genisys/internal/tools/fileio"
-	"github.com/larsn03/genisys/internal/tools/mutate"
-	"github.com/larsn03/genisys/internal/tools/perms"
-	"github.com/larsn03/genisys/internal/tools/search"
-	"github.com/larsn03/genisys/internal/tools/web"
-	"github.com/larsn03/genisys/internal/websearch"
 	"github.com/larsn03/genisys/internal/workspace"
 )
-
-// fullRegistry assembles the tool surface; web_search is registered only
-// when enabled AND configured (SPEC §9.5: hidden from schema otherwise).
-func fullRegistry(cfg *apiconfig.Config) *tools.Registry {
-	r := tools.NewRegistry()
-	r.Add(fileio.ReadLines{})
-	r.Add(fileio.ReadChars{})
-	r.Add(fileio.ListDir{})
-	r.Add(search.SearchLine{})
-	r.Add(search.FindFiles{})
-	r.Add(exectool.Shell{})
-	r.Add(mutate.EditFile{})
-	r.Add(mutate.ReplaceFile{})
-	r.Add(mutate.Delete{})
-	r.Add(mutate.Move{})
-	r.Add(mutate.Copy{})
-	r.Add(mutate.CreateFolder{})
-	r.Add(perms.ReadOnlyAccess())
-	r.Add(perms.ReadWriteAccess())
-	r.Add(perms.ScratchpadFolder{})
-	if c := websearchFromConfig(cfg); c != nil {
-		r.Add(web.Search{C: c})
-	}
-	return r
-}
-
-// websearchFromConfig builds the SearXNG client or nil.
-func websearchFromConfig(cfg *apiconfig.Config) *websearch.Client {
-	if !cfg.Web.SearchEnabled || cfg.Web.Provider != "searxng" || cfg.Web.Searxng.BaseURL == "" {
-		return nil
-	}
-	c, err := websearch.New(websearch.Config{
-		BaseURL:          cfg.Web.Searxng.BaseURL,
-		Language:         cfg.Web.Searxng.Language,
-		Categories:       cfg.Web.Searxng.Categories,
-		TimeoutMs:        cfg.Web.Searxng.TimeoutMs,
-		APIKeyEnv:        cfg.Web.Searxng.APIKeyEnv,
-		AllowInsecureTLS: cfg.Web.Searxng.AllowInsecureTLS,
-	})
-	if err != nil {
-		return nil
-	}
-	return c
-}
-
-// genRoot is ~/.genisys (overridable with --db's directory for tests).
-func genRoot(dbPath string) string {
-	if dbPath != "" {
-		return filepath.Dir(dbPath)
-	}
-	return filepath.Join(apiconfig.ExpandPath("~"), ".genisys")
-}
-
-func defaultDBPath() string {
-	return filepath.Join(apiconfig.ExpandPath("~"), ".genisys", "genisys.db")
-}
-
-type boot struct {
-	cfg  *apiconfig.Config
-	db   *store.DB
-	root string
-}
-
-func bootDB(dbFlag, cfgPath string) (*boot, error) {
-	cfg, err := apiconfig.LoadApp(cfgPath)
-	if errors.Is(err, os.ErrNotExist) {
-		// revert/serve need only the state db; config is optional there
-		cfg = (&apiconfig.Config{}).WithDefaults()
-	} else if err != nil {
-		return nil, err
-	}
-	root := genRoot(dbFlag)
-	dbPath := dbFlag
-	if dbPath == "" {
-		dbPath = defaultDBPath()
-	}
-	db, err := store.Open(dbPath)
-	if err != nil {
-		return nil, err
-	}
-	if err := db.Migrate(); err != nil {
-		db.Close()
-		return nil, err
-	}
-	// SPEC §23 boot step: orphan sessions → error, pending permissions →
-	// denied (nobody survived the crash).
-	if _, err := db.MarkOrphansInterrupted(); err != nil {
-		db.Close()
-		return nil, err
-	}
-	if err := db.DenyAllPending(); err != nil {
-		db.Close()
-		return nil, err
-	}
-	return &boot{cfg: cfg, db: db, root: root}, err
-}
-
-// projectFor returns (creating on demand) the project bound to a folder.
-func projectFor(db *store.DB, cwd string) (*store.Project, error) {
-	clean := filepath.Clean(cwd)
-	if p, err := db.GetProjectByWorkspacePath(clean); err == nil {
-		return p, nil
-	} else if !errors.Is(err, store.ErrNotFound) {
-		return nil, err
-	}
-	p := &store.Project{Name: filepath.Base(clean), Kind: "code", WorkspacePath: clean, AllowCoding: true}
-	if err := db.CreateProject(p); err != nil {
-		return nil, err
-	}
-	return p, nil
-}
-
-func workspaceHash(cwd string) string {
-	s := sha1.Sum([]byte(filepath.Clean(cwd)))
-	return hex.EncodeToString(s[:8])
-}
 
 type runOpts struct {
 	cfgPath, dbFlag, modelRef, cwd, toolsMode, resume string
@@ -164,7 +40,7 @@ func runCmd(args []string) error {
 	fs.StringVar(&o.modelRef, "model", "", "model reference endpoint/id (default: default_model)")
 	fs.StringVar(&o.cwd, "cwd", "", "workspace directory (default: current dir)")
 	fs.StringVar(&o.toolsMode, "tools-mode", "", "native|xml|none (default: from model profile)")
-	fs.StringVar(&o.resume, "resume", "", "resume session id (bare --resume: most recent for this workspace)")
+	fs.StringVar(&o.resume, "resume", "", "resume: session id, or 'latest' for this workspace")
 	fs.BoolVar(&o.newSession, "new", false, "start a fresh session (default)")
 	fs.BoolVar(&o.quiet, "quiet", false, "hide harness progress lines")
 	fs.Parse(args)
@@ -172,37 +48,18 @@ func runCmd(args []string) error {
 }
 
 func runREPL(o runOpts) error {
-	b, err := bootDB(o.dbFlag, o.cfgPath)
+	a, err := app.Open(o.cfgPath, o.dbFlag)
 	if err != nil {
 		return err
 	}
-	defer b.db.Close()
+	defer a.Close()
 
 	ref := o.modelRef
 	if ref == "" {
-		ref = b.cfg.DefaultModel
+		ref = a.Cfg.DefaultModel
 	}
 	if ref == "" {
 		return fmt.Errorf("no model selected: pass --model endpoint/id or set default_model in %s", o.cfgPath)
-	}
-	ep, prof, ok := b.cfg.ModelRef(ref)
-	if !ok {
-		return fmt.Errorf("model %q not found in %s (run `genisys config show`)", ref, o.cfgPath)
-	}
-	key := os.Getenv(ep.APIKeyEnv)
-	if key == "" {
-		key = ep.APIKey
-	}
-	client, err := model.New(ep.BaseURL, key, model.WithQuirks(prof.Quirks...))
-	if err != nil {
-		return err
-	}
-	mode := o.toolsMode
-	if mode == "" {
-		mode = prof.Supports.Tools
-	}
-	if mode == "" {
-		mode = "native"
 	}
 
 	wd, err := os.Getwd()
@@ -216,70 +73,33 @@ func runREPL(o runOpts) error {
 	if cwd, err = filepath.Abs(cwd); err != nil {
 		return err
 	}
-	proj, err := projectFor(b.db, cwd)
+	proj, err := a.ProjectFor(cwd)
 	if err != nil {
 		return err
 	}
 
-	// session: resume or create
-	var sess *store.Session
+	var row *store.Session
 	if o.resume != "" {
 		if o.resume == "latest" {
-			sess, err = b.db.LatestSession(proj.ID)
+			row, err = a.DB.LatestSession(proj.ID)
 		} else {
-			sess, err = b.db.GetSession(o.resume)
+			row, err = a.DB.GetSession(o.resume)
 		}
 		if err != nil {
 			return fmt.Errorf("resume: %w", err)
 		}
-		if sess.ModelRef != "" && o.modelRef == "" {
-			ref = sess.ModelRef
-			if ep2, prof2, ok2 := b.cfg.ModelRef(ref); ok2 {
-				ep, prof = ep2, prof2
-				key = os.Getenv(ep.APIKeyEnv)
-				if key == "" {
-					key = ep.APIKey
-				}
-				client, err = model.New(ep.BaseURL, key, model.WithQuirks(prof.Quirks...))
-				if err != nil {
-					return err
-				}
-				if o.toolsMode == "" {
-					mode = prof.Supports.Tools
-					if mode == "" {
-						mode = "native"
-					}
-				}
-			}
+		if o.modelRef == "" && row.ModelRef != "" {
+			ref = row.ModelRef
 		}
 	} else {
-		sess = &store.Session{ProjectID: proj.ID, ModelRef: ref, Persona: "coder"}
-		if err := b.db.CreateSession(sess); err != nil {
+		row = &store.Session{ProjectID: proj.ID, ModelRef: ref, Persona: "coder"}
+		if err := a.DB.CreateSession(row); err != nil {
 			return err
 		}
 	}
 
-	// scratchpad (SPEC §6.1: ~/.genisys/scratchpad/<session-id>/)
-	scratch := filepath.Join(b.root, "scratchpad", sess.ID)
-	if err := os.MkdirAll(scratch, 0o755); err != nil {
-		return err
-	}
-
-	// workspace stack: grants → shadow checkpoints → writer → broker
-	grants, err := workspace.NewGrants(cwd, scratch, true)
-	if err != nil {
-		return err
-	}
-	if granted, err := b.db.GrantedPaths(sess.ID); err == nil {
-		grants.LoadGrants(granted) // session-scoped grants survive resume
-	}
-	shadowDir := filepath.Join(b.root, "projects", proj.ID, "checkpoints")
-	cp, err := workspace.OpenShadow(shadowDir, cwd)
-	if err != nil {
-		return err
-	}
-
-	// stdin reader + permission channel (loop suspends on pending cards)
+	// stdin reader + permission channel (SPEC §9.7: the loop suspends on
+	// pending cards; the next input line is the answer)
 	linesCh := readStdin()
 	type permAsk struct {
 		req   workspace.PermRequest
@@ -305,34 +125,15 @@ func runREPL(o runOpts) error {
 	if o.quiet {
 		sink = events.Discard
 	}
-	writer := workspace.NewWriter(workspace.WriterOpts{
-		Grants: grants, Cp: cp, DB: b.db, ProjectID: proj.ID, SessionID: sess.ID, Emit: sink,
-	})
-	broker := workspace.NewBroker(grants, b.db, sess.ID, 0, ask, sink)
 
-	tpath := agent.TranscriptPath(filepath.Join(b.root, "projects", proj.ID), "", sess.ID)
-	tr, err := store.OpenTranscript(tpath)
+	h, err := a.OpenSession(row, proj, app.SessionOpts{
+		Emit: sink, Ask: ask, ModelRef: ref, ToolsMode: o.toolsMode, Cwd: cwd,
+	})
 	if err != nil {
 		return err
 	}
-	defer tr.Close()
-
-	deps := agent.Deps{
-		Client: client, Model: ref, Tools: fullRegistry(b.cfg), ToolsMode: mode,
-		MaxSteps: b.cfg.Agent.MaxSteps, ShellTimeout: b.cfg.Agent.ShellTimeoutMs,
-		Cwd: cwd, Scratchpad: scratch, Events: sink,
-		SessionID: sess.ID, Transcript: tr, DB: b.db, ProjectID: proj.ID,
-		Writer: writer, Perms: broker,
-	}
-	var as *agent.Session
-	if o.resume != "" {
-		as, err = agent.Resume(deps)
-		if err != nil {
-			return err
-		}
-	} else {
-		as = agent.NewSession(deps)
-	}
+	defer h.Close()
+	as := h.Sess
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -359,13 +160,17 @@ func runREPL(o runOpts) error {
 		}
 	}()
 
-	fmt.Printf("genisys %s — workspace: %s — model: %s (tools: %s) — session: %s\n", version, cwd, ref, mode, sess.ID)
+	mode := "native"
+	if _, m, err := a.ModelClient(ref); err == nil {
+		mode = m
+	}
+	fmt.Printf("genisys %s — workspace: %s — model: %s (tools: %s) — session: %s\n", version, cwd, ref, mode, row.ID)
 	if o.resume != "" {
-		fmt.Printf("resumed %d persisted messages from %s\n", len(as.Messages()), tpath)
+		fmt.Printf("resumed %d persisted messages\n", len(as.Messages()))
 	}
 	fmt.Println("Type a task. While the agent works: /steer <text> interrupts, /queue <text> waits. /quit exits.")
 
-	defMode := agent.InterjectionMode(b.cfg.Agent.Interjection.DefaultMode)
+	defMode := agent.InterjectionMode(a.Cfg.Agent.Interjection.DefaultMode)
 	if defMode != agent.ModeInterrupt {
 		defMode = agent.ModeQueue
 	}
@@ -386,8 +191,8 @@ func runREPL(o runOpts) error {
 			}
 			return
 		}
-		if sess.Title == "New session" {
-			_ = b.db.SetSessionTitle(sess.ID, titleOf(text))
+		if row.Title == "New session" {
+			_ = a.DB.SetSessionTitle(row.ID, titleOf(text))
 		}
 		wg.Add(1)
 		go func(text string) {
@@ -418,8 +223,6 @@ repl:
 		case <-ctx.Done():
 			return nil
 		case pa := <-permCh:
-			// SPEC §9.7: the loop suspends here; the next input line is
-			// the answer. Timeout/interrupt handled by the broker.
 			fmt.Fprintf(os.Stderr, "\n⚿ permission: %s access to %s\n  reason: %s\nallow? [y/N] ",
 				pa.req.Mode, pa.req.Path, orNone(pa.req.Reason))
 			ans := false
@@ -447,7 +250,7 @@ repl:
 			}
 			continue
 		case line == "/session":
-			fmt.Printf("  id %s  project %s  transcript %s\n", sess.ID, proj.ID, tpath)
+			fmt.Printf("  id %s  project %s\n", row.ID, proj.ID)
 			continue
 		}
 
@@ -475,18 +278,8 @@ repl:
 	}
 	mu.Unlock()
 	wg.Wait()
-	_ = b.db.SetSessionStatus(sess.ID, store.StatusIdle)
+	_ = a.DB.SetSessionStatus(row.ID, store.StatusIdle)
 	return nil
-}
-
-func cutPrefixArg(line, cmd string) (string, bool) {
-	if line == cmd {
-		return "", true
-	}
-	if strings.HasPrefix(line, cmd+" ") {
-		return strings.TrimSpace(strings.TrimPrefix(line, cmd+" ")), true
-	}
-	return "", false
 }
 
 func titleOf(text string) string {
@@ -517,6 +310,16 @@ func readStdin() chan string {
 	return ch
 }
 
+func cutPrefixArg(line, cmd string) (string, bool) {
+	if line == cmd {
+		return "", true
+	}
+	if strings.HasPrefix(line, cmd+" ") {
+		return strings.TrimSpace(strings.TrimPrefix(line, cmd+" ")), true
+	}
+	return "", false
+}
+
 // --- revert ------------------------------------------------------------------
 
 func revertCmd(args []string) error {
@@ -529,22 +332,22 @@ func revertCmd(args []string) error {
 	list := fs.Bool("list", false, "list checkpoints instead of reverting")
 	fs.Parse(args)
 
-	b, err := bootDB(*dbFlag, *cfgPath)
+	a, err := app.Open(*cfgPath, *dbFlag)
 	if err != nil {
 		return err
 	}
-	defer b.db.Close()
+	defer a.Close()
 
 	wd, _ := os.Getwd()
 	cwd := *cwdFlag
 	if cwd == "" {
 		cwd = wd
 	}
-	proj, err := projectFor(b.db, cwd)
+	proj, err := a.ProjectFor(cwd)
 	if err != nil {
 		return err
 	}
-	cps, err := b.db.ListCheckpoints(proj.ID)
+	cps, err := a.DB.ListCheckpoints(proj.ID)
 	if err != nil {
 		return err
 	}
@@ -554,18 +357,18 @@ func revertCmd(args []string) error {
 			return nil
 		}
 		for _, c := range cps {
-			fmt.Printf("%s  %-8s  %-10s %s\n", c.CreatedAt, c.SessionID[:min(8, len(c.SessionID))], c.StepID, c.Label)
+			fmt.Printf("%s  %-8s  %-10s %s\n", c.CreatedAt, short(c.SessionID, 8), c.StepID, c.Label)
 		}
 		if *step == "" {
 			fmt.Println("\nspecify --step <id> to revert (newest matching checkpoint is used)")
 		}
 		return nil
 	}
-	cr, err := b.db.FindCheckpoint(proj.ID, *sessionID, *step)
+	cr, err := a.DB.FindCheckpoint(proj.ID, *sessionID, *step)
 	if err != nil {
 		return fmt.Errorf("no checkpoint for step %q: %w (try `genisys revert --list`)", *step, err)
 	}
-	cp, err := workspace.OpenShadow(filepath.Join(b.root, "projects", proj.ID, "checkpoints"), proj.WorkspacePath)
+	cp, err := workspace.OpenShadow(filepath.Join(a.Root, "projects", proj.ID, "checkpoints"), proj.WorkspacePath)
 	if err != nil {
 		return err
 	}
@@ -575,7 +378,7 @@ func revertCmd(args []string) error {
 	var names []string
 	for i, c := range cps { // cps are newest-first
 		if c.ID == cr.ID && i > 0 {
-			names, err = cp.DiffNames(cr.SHA, cps[i-1].SHA) // next checkpoint
+			names, err = cp.DiffNames(cr.SHA, cps[i-1].SHA)
 			if err != nil {
 				return err
 			}
@@ -594,11 +397,18 @@ func revertCmd(args []string) error {
 	if err := cp.Restore(cr.SHA, names); err != nil {
 		return err
 	}
-	fmt.Printf("reverted %d file(s) to checkpoint %s (%s):\n", len(names), cr.SHA[:min(8, len(cr.SHA))], cr.Label)
+	fmt.Printf("reverted %d file(s) to checkpoint %s (%s):\n", len(names), short(cr.SHA, 8), cr.Label)
 	for _, n := range names {
 		fmt.Println("  ", n)
 	}
 	return nil
+}
+
+func short(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
 
 // printerSink renders the event spine for the terminal (SPEC §21 consumer).
