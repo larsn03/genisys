@@ -998,7 +998,7 @@ Fork, side-by-side panes, background badges, compaction, checkpoint browser, set
 
 | # | Question | Leaning |
 |---|---|---|
-| Q1 | Ship as browser-based local app (v1) vs. Tauri wrapper from day one? | Web-first; **Linux desktop vehicle is the AppImage (§19.1)** — it already delivers "double-click → app in browser". Tauri/webview shell considered later (real browser tab + keyring); macOS/Windows shells follow the same decision |
+| Q1 | Ship as browser-based local app (v1) vs. Tauri wrapper from day one? | **Resolved:** web-first core stays primary (AppImage, G13, zero deps) **and** an optional native shell shipped as `genisys window` behind `-tags wails` (Wails v3: GTK4/WebKitGTK-6.0 default, `gtk3` tag fallback). Same server, same UI — only the chrome differs. Window builds need CGO + webkit headers, so they are companion artifacts, never the primary one |
 | Q2 | Which endpoint(s) to develop against first? | User's remote OpenAI-compatible server (URL/model TBD) |
 | Q3 | Voice input (Voxtral/local whisper) timing | Post-M5 extension; UI mic button stays disabled |
 | Q4 | Multi-endpoint load balancing / auto-fallback model | Post-v1 |

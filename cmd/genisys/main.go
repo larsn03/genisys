@@ -43,6 +43,8 @@ func run(args []string) error {
 		return revertCmd(args[1:])
 	case "search":
 		return searchCmd(args[1:])
+	case "window":
+		return windowCmd(args[1:])
 	case "serve":
 		return serveCmd(args[1:])
 	case "help", "-h", "--help":
@@ -61,6 +63,7 @@ usage:
   genisys run [--config <path>] [--model ep/id] [--cwd dir] [--resume [id]]   agent REPL
   genisys revert [--list] [--step <id>] [--session <id>]   roll back a step's files
   genisys search test              probe the configured SearXNG instance
+  genisys window        native desktop window (needs -tags wails build)
   genisys version
   genisys serve [--addr host:port]   web server (API + WS + UI)
 `)

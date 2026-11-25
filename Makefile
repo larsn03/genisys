@@ -6,7 +6,7 @@ COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 DISTOS  := linux/amd64 linux/arm64 darwin/arm64 windows/amd64
 
-.PHONY: all build test testrace lint fmt vet ui embed-check deps-audit clean
+.PHONY: all build window test testrace lint fmt vet ui embed-check deps-audit clean
 
 all: build
 
@@ -16,6 +16,12 @@ e2e: ## browser e2e against serve + mock endpoint (needs node + chromium)
 
 build:
 	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/genisys
+
+# native desktop window (SPEC Q1): needs CGO + GTK4/WebKitGTK dev headers
+#   Fedora: sudo dnf install gtk4-devel webkitgtk6.0-devel
+#   Debian: sudo apt install libgtk-4-dev libwebkitgtk-6.0-dev
+window:
+	CGO_ENABLED=1 $(GO) build -tags wails -ldflags "$(LDFLAGS)" -o genisys-window ./cmd/genisys
 
 test:
 	$(GO) test ./...

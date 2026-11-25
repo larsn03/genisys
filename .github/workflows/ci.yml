@@ -56,6 +56,23 @@ jobs:
 
   # e2e-mock (IMPL §14): real browser against `genisys serve` + scripted
   # OpenAI mock — SPEC M2 exit gate at the UI level.
+  # SPEC Q1: native window shell must keep compiling (GTK4 + WebKitGTK 6.0)
+  window:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - name: install webkit dev libs
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libgtk-4-dev libwebkitgtk-6.0-dev pkg-config build-essential
+      - name: vet + build native binary (CGO on, -tags wails)
+        env: { CGO_ENABLED: "1" }
+        run: |
+          go vet -tags wails ./internal/desktop/
+          go build -tags wails -ldflags "-s -w" -o dist/genisys-window-linux-amd64 ./cmd/genisys
+      - uses: actions/upload-artifact@v4
+        with: { name: window-linux, path: dist/genisys-window-linux-amd64 }
+
   e2e:
     runs-on: ubuntu-latest
     steps:

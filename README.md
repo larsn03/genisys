@@ -249,7 +249,9 @@ config through `genisys_tool`.
 One binary, several faces:
 
 ```bash
-genisys serve                     # web UI (default command)
+genisys serve                     # web UI in your browser (default command)
+genisys window                    # native desktop window (needs a
+                                  # `make window` build: CGO + GTK4/WebKitGTK)
 genisys serve --addr 0.0.0.0:8710 # expose on your LAN (token still required)
 genisys serve --no-open           # don't auto-open the browser
 
@@ -304,10 +306,14 @@ checkpoints). Deleting a session deletes its data.
 ## FAQ
 
 **Is it a desktop app or a website?**
-Both, sort of: it installs and launches like a desktop app (AppImage,
-desktop entry, icon) and opens its UI in a browser tab served from
-localhost. A native-window shell (Wails/Tauri-style) is a tracked future
-step (SPEC Q1).
+Both flavours from one codebase. The default AppImage installs and
+launches like a desktop app and renders the UI in a browser tab served
+from localhost — zero system dependencies. `genisys window` opens a
+**real native window** instead (Wails v3: GTK4/WebKitGTK on Linux,
+WKWebView on macOS, WebView2 on Windows); that build needs CGO and the
+webkit dev headers (`make window`). The browser build stays the primary
+artifact (SPEC G13); the window build is a release-candidate companion
+(SPEC Q1).
 
 **Does anything leave my machine?**
 Only what your configured endpoint receives. Web search defaults to your
@@ -335,6 +341,7 @@ is committed so plain `go build` works without Node).
 ```bash
 make ui        # node build → ui/dist (embedded into the binary via go:embed)
 make build     # CGO off → ./genisys
+make window    # native desktop window → ./genisys-window (needs gtk4-devel + webkitgtk6.0-devel)
 make testrace  # full race test suite
 make e2e       # Playwright browser tests against a scripted mock endpoint
 make dist      # 4-OS tarballs + AppImage (needs appimagetool)
