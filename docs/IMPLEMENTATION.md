@@ -1,10 +1,10 @@
 # Genisys — Implementation Plan
 
-**Version:** 0.1 · **Date:** 2026-11-24 · **Companion to:** [`SPEC.md`](SPEC.md) (v0.2)
+**Version:** 0.2 · **Date:** 2026-11-25 · **Companion to:** [`SPEC.md`](SPEC.md) (v0.4)
 
 > **Progress (2026-11-25):** ✅ P0 · ✅ P1 · ✅ **P2 (all: P2-1 … P2-9)** · ✅ SearXNG
 > web search (SPEC §9.5 made normative: remote instance support, JSON-API client,
-> `genisys search test` probe, `web_search` tool — M4 item pulled forward) · ✅ P3a (server) + P3b (three-pane shell w/ resizable+persisted panes, event-reducer UI, step traces + per-step revert, model picker, @-palette, context meter, Monaco editor, git badges, checkpoint history tab, interjection promote/withdraw, interrupt card). ✅ P3c (e2e job, ProjectRail grouping, attachments) · ✅ P4 (embedded CPython-WASI sandbox + paperworks, run_python/load_file_attachment, delivery, previews, work persona) · ✅ P5 (agentic_find sub-agents, web providers + web_extract, skills system + skill-management, MCP progressive disclosure, in-app browser pane) · ✅ **P6 (all: P6-1 … P6-7)** — context compaction, fork/pin/delete + badges, file-history restore, full settings screens + themes + onboarding, error cards, genisys_tool + introspection/file-history skills, Linux AppImage distribution.
+> `genisys search test` probe, `web_search` tool — M4 item pulled forward) · ✅ P3a (server) + P3b (three-pane shell w/ resizable+persisted panes, event-reducer UI, step traces + per-step revert, model picker, @-palette, context meter, Monaco editor, git badges, checkpoint history tab, interjection promote/withdraw, interrupt card). ✅ P3c (e2e job, ProjectRail grouping, attachments) · ✅ P4 (embedded CPython-WASI sandbox + paperworks, run_python/load_file_attachment, delivery, previews, work persona) · ✅ P5 (agentic_find sub-agents, web providers + web_extract, skills system + skill-management, MCP progressive disclosure, in-app browser pane) · ✅ **P6 (all: P6-1 … P6-7)** — context compaction, fork/pin/delete + badges, file-history restore, full settings screens + themes + onboarding, error cards, genisys_tool + introspection/file-history skills, Linux AppImage distribution · ✅ **Desktop-first pivot** — Wails v3 native window is the product (`genisys` / `genisys <dir|file>` / desktop AppImage); browser tab demoted to fallback; `make` → `./genisys`, `make portable` → CGO-free (SPEC Q1 resolved).
 > Earlier milestone: durable
 > sessions (sqlite + jsonl transcript + resume), enforced workspace permissions,
 > shadow-git checkpoints with `genisys revert`, mutation tools, CLI permission cards.
@@ -487,6 +487,15 @@ MCP echo callable; web toggle fully disables web tools.
 > jobs, smoke-run gate) + 4-OS tarballs + version stamping + README.
 > Remaining for M5 exit gate: full acceptance-corpus soak on the live
 > endpoint (tracked separately).
+>
+> **Post-P6 pivot (2026-11-25): desktop-first.** The browser-tab flow became
+> a fallback: `genisys` (no args) and the AppImage open a **native Wails v3
+> window** (SPEC Q1 resolved, G12/G13 rewritten). `make` → `./genisys`
+> (CGO + `-tags wails`); `make portable` → CGO-free single binary;
+> `genisys <dir|file>` deep-links a project (+ focused file) into the window;
+> closing the window stops the server; EADDRINUSE falls back to an ephemeral
+> port. CI gained a `window` job (GTK4/WebKitGTK build gate) and the package
+> job now ships the desktop AppImage.
 
 | Task | Description | SPEC | DoD | SP |
 |---|---|---|---|---|
@@ -554,7 +563,9 @@ fuzz-brief  → 60 s fuzz on agent/parser
 e2e-mock    → Playwright against genisys serve + mock endpoint
 nightly     → fuzz-10m, property, crash-matrix, endpoint-matrix (real servers,
               self-hosted runner), soak
-release     → tag → make dist (AppImage [primary, G13] + 4 tarballs + checksums) → GitHub Release
+release     → tag → make dist (desktop AppImage [native window, primary, G13]
+              + 4 CGO-free tarballs + checksums) → GitHub Release
+window      → go vet + go build -tags wails (GTK4/WebKitGTK dev libs) — build gate
 ```
 
 Mock endpoint: small Go test server (`cmd/mockendpoint`, testdata-driven) that replays

@@ -5,9 +5,9 @@
 Genisys is a faithful recreation of [LM Studio Bionic](docs/images/README.md)
 — the desktop agent for open models — re-targeted at any
 **OpenAI-compatible endpoint**: llama.cpp, vLLM, Ollama, LM Studio,
-OpenRouter, or anything that speaks `POST /v1/chat/completions`. One static
-binary. YAML-only configuration. No accounts, no telemetry, no cloud
-required — your prompts go only where you point the URL.
+OpenRouter, or anything that speaks `POST /v1/chat/completions`. One binary,
+one native window. YAML-only configuration. No accounts, no telemetry, no
+cloud required — your prompts go only where you point the URL.
 
 Everything that made Bionic *Bionic* is here: projects and sessions, a real
 workspace with **checkpointed** file changes you can undo per step or per
