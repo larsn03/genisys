@@ -6,7 +6,7 @@ COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 DISTOS  := linux/amd64 linux/arm64 darwin/arm64 windows/amd64
 
-.PHONY: all build window test testrace lint fmt vet ui embed-check deps-audit clean
+.PHONY: all build portable window test testrace lint fmt vet ui embed-check deps-audit clean
 
 all: build
 
@@ -14,18 +14,24 @@ e2e: ## browser e2e against serve + mock endpoint (needs node + chromium)
 	CGO_ENABLED=0 go build -o dist/genisys ./cmd/genisys
 	node e2e/run.mjs
 
-build:
-	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/genisys
-
-# native desktop window (SPEC Q1): needs CGO + GTK4/WebKitGTK dev headers
+# Default build IS the desktop app (SPEC Q1: native window is the product).
+# Needs CGO + GTK4/WebKitGTK dev headers:
 #   Fedora: sudo dnf install gtk4-devel webkitgtk6.0-devel gcc
 #   Debian: sudo apt install libgtk-4-dev libwebkitgtk-6.0-dev
 # Homebrew's pkg-config (first on PATH on this box) does not search the
-# distro's /usr/lib64/pkgconfig — add it so system webkit/gtk .pc files
-# are found regardless of which pkg-config wins.
+# distro's /usr/lib64/pkgconfig — append it so system .pc files are found.
 SYSPC := $(shell test -d /usr/lib64/pkgconfig && echo :/usr/lib64/pkgconfig)
-window:
-	CGO_ENABLED=1 PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)$(SYSPC)" $(GO) build -tags wails -ldflags "$(LDFLAGS)" -o genisys-window ./cmd/genisys
+
+build:
+	CGO_ENABLED=1 PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)$(SYSPC)" $(GO) build -tags wails -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/genisys
+
+# portable: CGO-free single binary (headless serve, cross-compiles, hosts
+# without webkit — opens a browser tab instead of a native window)
+portable:
+	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o genisys-portable ./cmd/genisys
+
+# muscle-memory alias
+window: build
 
 test:
 	$(GO) test ./...
