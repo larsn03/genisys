@@ -62,6 +62,10 @@ export const api = {
     req<{ default: string; models: import("./types").ModelInfo[] }>("GET", "/api/models"),
   gitStatus: (id: string) =>
     req<import("./types").GitStatus>("GET", `/api/sessions/${id}/git-status`),
+  previewURL: (id: string, path: string) =>
+    `/api/sessions/${id}/preview?path=${encodeURIComponent(path)}&token=${TOKEN}`,
+  fileURL: (id: string, path: string) =>
+    `/api/sessions/${id}/file?path=${encodeURIComponent(path)}&token=${TOKEN}`,
   checkpoints: (id: string) =>
     req<{ id: number; step_id: string; sha: string; label: string; created_at: string }[]>(
       "GET",

@@ -118,6 +118,19 @@ describe("reduceEvent", () => {
     expect(ij.state).toBe("delivered");
   });
 
+  it("deliver + attach events become cards", () => {
+    let items: Item[] = [];
+    for (const e of [
+      ev("ui_deliver_file", { path: "deck.pptx" }),
+      ev("ui_attach_file", { path: "/scratch/attachments/memo.docx", alt: "" }),
+    ])
+      items = reduceEvent(items, e);
+    const dels = all(items, "deliver") as Extract<Item, { kind: "deliver" }>[];
+    expect(dels).toHaveLength(2);
+    expect(dels[0]).toMatchObject({ path: "deck.pptx", attached: false });
+    expect(dels[1].attached).toBe(true);
+  });
+
   it("session_error closes open steps", () => {
     let items: Item[] = [];
     for (const e of [

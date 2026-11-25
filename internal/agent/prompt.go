@@ -24,6 +24,7 @@ var systemTmpl = template.Must(template.New("system").Parse(systemTmplText))
 type PromptEnv struct {
 	Cwd        string
 	Scratchpad string
+	Persona    string // "" | "coder" | "work" (SPEC §8 personas)
 	ToolsMode  string // native | xml | none (SPEC §13.4)
 	Tools      []model.Tool
 	Date       string

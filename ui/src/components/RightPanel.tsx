@@ -109,6 +109,7 @@ function FilesTab() {
             <div
               key={full}
               onClick={() => (f.is_dir ? void refreshFiles(full) : void openFile(full))}
+              onDoubleClick={() => !f.is_dir && useStore.getState().openPreview(full)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 setMenu({ x: e.clientX, y: e.clientY, path: full });
@@ -120,6 +121,18 @@ function FilesTab() {
               </span>
               <span className="truncate flex-1">{f.name}</span>
               {badge(f.name)}
+              {!f.is_dir && /\.(md|txt|pdf|png|jpe?g|gif|pptx|docx|xlsx|csv|json)$/i.test(f.name) && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    useStore.getState().openPreview(full);
+                  }}
+                  className="text-faint hover:text-ink text-[11px]"
+                  title="Preview"
+                >
+                  👁
+                </button>
+              )}
               {!f.is_dir && <span className="text-faint text-[10px]">{f.size}B</span>}
             </div>
           );

@@ -30,7 +30,9 @@ type Deps struct {
 	Retry        *model.RetryPolicy
 	Writer       *workspace.Writer
 	Perms        *workspace.Broker
-	ShellTimeout int // ms; default 10000
+	ShellTimeout int    // ms; default 10000
+	RuntimeDir   string // sandbox guest cache root (SPEC §17.1)
+	Persona      string // coder | work (SPEC §8)
 
 	// P2 persistence (optional; nil = in-memory only).
 	SessionID  string
@@ -210,7 +212,7 @@ func (s *Session) inject(ijs []Interjection, boundary string) {
 // nil-calls return with nil error means "interrupted, re-enter the loop".
 func (s *Session) oneStep(stepCtx context.Context, stepID string) (string, []model.ToolCall, error) {
 	sysPrompt, err := RenderSystem(PromptEnv{
-		Cwd: s.d.Cwd, Scratchpad: s.d.Scratchpad,
+		Cwd: s.d.Cwd, Scratchpad: s.d.Scratchpad, Persona: s.d.Persona,
 		ToolsMode: s.d.ToolsMode, Tools: s.d.Tools.Definitions(),
 	})
 	if err != nil {
@@ -291,7 +293,8 @@ func (s *Session) runTools(ctx context.Context, stepID string, calls []model.Too
 			s.emit(events.ToolStarted, map[string]any{"step": stepID, "call_id": calls[i].ID, "tool": calls[i].Function.Name, "args": firstLineOf(calls[i].Function.Arguments, 100)})
 			res := s.d.Tools.Execute(ctx, calls[i], &tools.World{
 				Cwd: s.d.Cwd, Scratchpad: s.d.Scratchpad, ShellTimeout: s.d.ShellTimeout,
-				Emit: s.d.Events, StepID: stepID, Writer: s.d.Writer, Perms: s.d.Perms,
+				RuntimeDir: s.d.RuntimeDir,
+				Emit:       s.d.Events, StepID: stepID, Writer: s.d.Writer, Perms: s.d.Perms,
 			})
 			results[i] = res
 			// SPEC §7.2: persist the moment it lands (order among a
@@ -314,7 +317,7 @@ func (s *Session) wrapUp(ctx context.Context) (string, error) {
 	s.appendMsg("", model.Message{Role: "user",
 		Content: "[harness] Step budget exhausted. Summarize the current state: what is done, what remains, and any blocker. Do not call tools."})
 	sysPrompt, err := RenderSystem(PromptEnv{
-		Cwd: s.d.Cwd, Scratchpad: s.d.Scratchpad,
+		Cwd: s.d.Cwd, Scratchpad: s.d.Scratchpad, Persona: s.d.Persona,
 		ToolsMode: s.d.ToolsMode, Tools: s.d.Tools.Definitions(),
 	})
 	if err != nil {

@@ -151,6 +151,16 @@ export function reduceEvent(items: Item[], ev: WSEvent): Item[] {
       }
       break;
     }
+    case "ui_deliver_file":
+    case "ui_attach_file": {
+      out.push({
+        kind: "deliver",
+        id: nid(),
+        path: str(p, "path"),
+        attached: ev.type === "ui_attach_file",
+      });
+      break;
+    }
     case "interrupt_started": {
       out.push({ kind: "interrupt", id: nid(), step });
       break;

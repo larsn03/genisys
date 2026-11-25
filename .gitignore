@@ -22,3 +22,4 @@ coverage.out
 ui/test-results/
 ui/playwright-report/
 dist/
+__pycache__/

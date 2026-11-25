@@ -47,6 +47,7 @@ interface State {
 
   layout: PaneState;
   error: string | null;
+  preview: string | null; // path currently open in the preview overlay
 
   refreshSessions: () => Promise<void>;
   refreshProjects: () => Promise<void>;
@@ -70,6 +71,8 @@ interface State {
   refreshCheckpoints: () => Promise<void>;
   revertStep: (stepId: string) => Promise<void>;
 
+  openPreview: (path: string) => void;
+  closePreview: () => void;
   setShowAll: (v: boolean) => void;
   setLayout: (patch: Partial<PaneState>) => void;
   close: () => void;
@@ -100,6 +103,7 @@ export const useStore = create<State>((set, get) => ({
 
   layout: loadLayout(),
   error: null,
+  preview: null,
 
   async loadModels() {
     try {
@@ -320,6 +324,9 @@ export const useStore = create<State>((set, get) => ({
     void get().refreshGit();
     void get().refreshCheckpoints();
   },
+
+  openPreview: (path) => set({ preview: path }),
+  closePreview: () => set({ preview: null }),
 
   setShowAll: (v) => set({ showAll: v }),
 

@@ -67,3 +67,27 @@ func TestPromptTokenBudget(t *testing.T) {
 		t.Errorf("prompt budget exceeded: %d > 6000 (SPEC §8)", n)
 	}
 }
+
+func TestWorkPersonaBlock(t *testing.T) {
+	env := PromptEnv{Cwd: "/home/u/proj", Scratchpad: "/tmp/scratch", ToolsMode: "native"}
+	env.Tools = sixTools().Definitions()
+	env.Persona = "work"
+	out, err := RenderSystem(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"paperworks", "add_assumptions", "deliver_file_to_user"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("work persona missing %q", want)
+		}
+	}
+	// coder default must NOT carry the work block (budget + focus)
+	env.Persona = ""
+	out2, err := RenderSystem(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out2, "add_assumptions") {
+		t.Error("coder persona unexpectedly carries the work block")
+	}
+}

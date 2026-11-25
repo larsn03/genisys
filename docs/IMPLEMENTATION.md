@@ -4,7 +4,7 @@
 
 > **Progress (2026-11-25):** ✅ P0 · ✅ P1 · ✅ **P2 (all: P2-1 … P2-9)** · ✅ SearXNG
 > web search (SPEC §9.5 made normative: remote instance support, JSON-API client,
-> `genisys search test` probe, `web_search` tool — M4 item pulled forward) · ✅ P3a (server) + P3b (three-pane shell w/ resizable+persisted panes, event-reducer UI, step traces + per-step revert, model picker, @-palette, context meter, Monaco editor, git badges, checkpoint history tab, interjection promote/withdraw, interrupt card). 🟡 follow-ups: Playwright e2e job in CI, ProjectRail grouping, attachments (P4).
+> `genisys search test` probe, `web_search` tool — M4 item pulled forward) · ✅ P3a (server) + P3b (three-pane shell w/ resizable+persisted panes, event-reducer UI, step traces + per-step revert, model picker, @-palette, context meter, Monaco editor, git badges, checkpoint history tab, interjection promote/withdraw, interrupt card). ✅ P3c (e2e job, ProjectRail grouping, attachments) · ✅ P4 (embedded CPython-WASI sandbox + paperworks, run_python/load_file_attachment, delivery, previews, work persona).
 > Earlier milestone: durable
 > sessions (sqlite + jsonl transcript + resume), enforced workspace permissions,
 > shadow-git checkpoints with `genisys revert`, mutation tools, CLI permission cards.
@@ -378,6 +378,41 @@ the Playwright `e2e-mock` CI job (`ui/e2e/app.spec.ts` via `e2e/run.mjs`: chat r
 
 **Exit gate (SPEC M3 AC):** acceptance corpus row 2 produces a valid 6-slide deck opened
 in preview, assumptions section present; zero system-Python dependency on the default path.
+
+### Delivered (P4)
+
+- **P4-1** — Tier-1 sandbox = **embedded CPython-WASI 3.13.17** (`periareon/cpython-wasi-build`
+  v3.13.17 / wasi_sdk-24, `python.wasm` + stdlib shipped as a 29 MB go:embed zip; extracted +
+  pre-instantiated on first use). wazero JIT + on-disk compile cache (warm start ~0.3 s);
+  cancellation via `WithCloseOnContextDone` — verified to kill a pure `while True` guest
+  ~0.1 s after interrupt. Contract: guest at `/python`, paperworks at `/lib/paperworks`,
+  inputs RO at `/inputs`, writable `/outputs` + `/tmp`. Wheel mounting replaced by
+  stdlib-only paperworks (WASM guest has no C extensions); PDF route is `pdf_simple`
+  (pure-Python writer, validated with pdftoppm/pdftotext/LibreOffice). DoD test
+  `TestPDFAndDeck`: 1-page PDF + 3-slide PPTX from the embedded guest alone, no system Python.
+- **P4-2** — `sandbox/proc.go`: Tier-2 runner with bwrap/nsjail/sandbox-exec/docker
+  autodetect + `Detect()` capability report (wasm / tier2 / python / libreoffice) for
+  settings UI. bwrap recipe: RO host root, net unshared, contract dirs under writable
+  tmpfs. Runs host python3 + paperworks for packages the WASM guest lacks.
+- **P4-3** — `paperworks/` (go:embed, stdlib-only): `ppt_builder.Deck` (title/bullets/
+  two-col/assumptions → OOXML pptx, LibreOffice-validated), `docx_redline` (tracked
+  changes), `xlsx_helpers`, `pdf_simple`.
+- **P4-4** — `tools/py`: `run_python` (`stage_files` → `/inputs`, timeout default 60 s /
+  max 5 m, outputs copied to `scratchpad/outputs/<step>-*/`, live `tool_output` events);
+  interrupt kills the guest cleanly (test-enforced, race-aware budgets).
+- **P4-5** — attachment upload REST (`POST …/upload`, no-clobber names), `load_file_attachment`
+  (text/csv/json/md direct; docx paragraph extraction; xlsx/pdf/pptx → run_python guidance),
+  `deliver_file_to_user` scratchpad→workspace e2e test (overwrite rules, `file_changed`,
+  `ui_deliver_file` events).
+- **P4-6** — `GET …/preview`: text/images/pdf inline; pptx/docx/xlsx → PDF via LibreOffice
+  when present (cached in `scratchpad/previews/`), graceful `415 + fallback:download`
+  otherwise. UI: `PreviewOverlay` (md/pdf/image inline, office via converter, download
+  escape hatch) + `DeliverCard` on `ui_deliver_file`/`ui_attach_file` events.
+- **P4-7** — `work` persona block in the system prompt (deliverables-first, paperworks
+  hints, assumptions section, citations) gated on session persona; prompt test asserts
+  presence for `work` and absence for `coder`.
+- UI: `deliver` stream item; preview opened from DeliverCard and FilesTree (eye button /
+  double-click).
 
 ---
 

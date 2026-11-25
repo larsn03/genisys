@@ -4,6 +4,7 @@
 // chips with promote/withdraw, interrupt confirmation card.
 
 import { useEffect, useRef, useState } from "react";
+import { api } from "../api";
 import type { Item } from "../types";
 import { Markdown } from "./Markdown";
 import { useStore } from "../store";
@@ -83,6 +84,8 @@ function ItemView({ item }: { item: Item }) {
           </div>
         </div>
       );
+    case "deliver":
+      return <DeliverCard item={item} />;
     case "error":
       return (
         <div className="border border-err/40 bg-err/5 rounded-xl px-4 py-2.5 text-sm text-err">
@@ -264,6 +267,40 @@ function DiffCard({ path, change, diff }: { path: string; change: string; diff?:
           ))}
         </pre>
       )}
+    </div>
+  );
+}
+
+function DeliverCard({ item }: { item: Extract<Item, { kind: "deliver" }> }) {
+  const current = useStore((s) => s.current);
+  const openPreview = useStore((s) => s.openPreview);
+  if (!current) return null;
+  const name = item.path.split("/").pop();
+  return (
+    <div className="border border-accent/30 bg-accent/5 rounded-xl px-4 py-3 flex items-center gap-3">
+      <span className="text-lg">{item.attached ? "📎" : "📦"}</span>
+      <div className="flex-1 min-w-0">
+        <div className="text-[13px] truncate">
+          {item.attached ? "Attached" : "Delivered"}:{" "}
+          <span className="font-mono">{name}</span>
+        </div>
+        {!item.attached && (
+          <div className="text-[11px] text-faint font-mono truncate">{item.path}</div>
+        )}
+      </div>
+      <button
+        onClick={() => openPreview(item.path)}
+        className="px-3 py-1.5 rounded-lg bg-accent text-white text-[12px] hover:brightness-110"
+      >
+        Preview
+      </button>
+      <a
+        href={api.fileURL(current, item.path)}
+        download={name}
+        className="px-3 py-1.5 rounded-lg border border-line text-mute text-[12px] hover:bg-panel2"
+      >
+        ↓
+      </a>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { useStore } from "./store";
 import { MessageStream } from "./components/MessageStream";
 import { Composer } from "./components/Composer";
 import { RightPanel } from "./components/RightPanel";
+import { PreviewOverlay } from "./components/PreviewOverlay";
 
 export default function App() {
   const sessions = useStore((s) => s.sessions);
@@ -167,6 +168,8 @@ export default function App() {
           {layout.rightOpen ? "⟩" : "⟨"} files
         </button>
       )}
+
+      <PreviewOverlay />
 
       {error && (
         <div

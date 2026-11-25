@@ -24,6 +24,7 @@ type World struct {
 	StepID       string
 	Writer       *workspace.Writer // nil = P1 behavior (no grants/checkpoints)
 	Perms        *workspace.Broker // nil = no permission UI
+	RuntimeDir   string            // sandbox guest cache root ("" = run_python unavailable)
 }
 
 // Access resolves a tool path and enforces the grant table (SPEC §10.2).

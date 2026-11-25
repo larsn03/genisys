@@ -20,6 +20,7 @@ import (
 	"github.com/larsn03/genisys/internal/tools/fileio"
 	"github.com/larsn03/genisys/internal/tools/mutate"
 	"github.com/larsn03/genisys/internal/tools/perms"
+	py "github.com/larsn03/genisys/internal/tools/py"
 	"github.com/larsn03/genisys/internal/tools/search"
 	"github.com/larsn03/genisys/internal/tools/ui"
 	"github.com/larsn03/genisys/internal/tools/web"
@@ -125,6 +126,8 @@ func (a *App) Registry(withUI bool) *tools.Registry {
 	r.Add(perms.ReadOnlyAccess())
 	r.Add(perms.ReadWriteAccess())
 	r.Add(perms.ScratchpadFolder{})
+	r.Add(py.Tool{})
+	r.Add(py.LoadAttachment{})
 	if withUI {
 		for _, t := range ui.Tools() {
 			r.Add(t)
@@ -244,7 +247,9 @@ func (a *App) OpenSession(row *store.Session, proj *store.Project, o SessionOpts
 	deps := agent.Deps{
 		Client: client, Model: ref, Tools: o.Registry, ToolsMode: mode,
 		MaxSteps: a.Cfg.Agent.MaxSteps, ShellTimeout: a.Cfg.Agent.ShellTimeoutMs,
-		Cwd: cwd, Scratchpad: scratch, Events: o.Emit,
+		RuntimeDir: filepath.Join(a.Root, "runtime"),
+		Persona:    row.Persona,
+		Cwd:        cwd, Scratchpad: scratch, Events: o.Emit,
 		SessionID: row.ID, Transcript: tr, DB: a.DB, ProjectID: projectID(proj),
 		Writer: writer, Perms: broker, Interj: o.Interj,
 	}

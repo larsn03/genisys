@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -294,6 +295,47 @@ func TestModelsAndGitStatus(t *testing.T) {
 	e.mustJSON(t, "GET", "/api/sessions/"+sid+"/git-status", nil, &gs)
 	if gs.Repo {
 		t.Fatalf("expected repo:false for plain dir, got %+v", gs)
+	}
+}
+
+// P4-6: preview serves text directly and office docs via LibreOffice.
+func TestPreview(t *testing.T) {
+	e := newEnv(t, []string{sseText("x")}, 0)
+	sid := e.newSession(t)
+	os.WriteFile(filepath.Join(e.wsdir, "note.md"), []byte("# hi"), 0o644)
+	code, b := e.do(t, "GET", "/api/sessions/"+sid+"/preview?path=note.md", nil)
+	if code != 200 || !strings.Contains(string(b), "# hi") {
+		t.Errorf("md preview = %d %s", code, b)
+	}
+	// office doc without soffice → 415 fallback; with soffice → pdf
+	os.WriteFile(filepath.Join(e.wsdir, "d.docx"), []byte("PK\x03\x04not-really"), 0o644)
+	code, b = e.do(t, "GET", "/api/sessions/"+sid+"/preview?path=d.docx", nil)
+	if _, err := exec.LookPath("soffice"); err != nil {
+		if code != http.StatusUnsupportedMediaType {
+			t.Errorf("docx preview fallback = %d, want 415: %s", code, b)
+		}
+	} else {
+		if code != 200 && code != http.StatusUnsupportedMediaType {
+			t.Errorf("docx preview = %d: %s", code, b)
+		}
+	}
+	// scratchpad fallback: upload then preview by bare name
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", "up.md")
+	fw.Write([]byte("uploaded"))
+	mw.Close()
+	req, _ := http.NewRequest("POST", e.hs.URL+"/api/sessions/"+sid+"/upload", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+e.token)
+	resp, err := e.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	code, b = e.do(t, "GET", "/api/sessions/"+sid+"/preview?path=up.md", nil)
+	if code != 200 || !strings.Contains(string(b), "uploaded") {
+		t.Errorf("scratchpad preview = %d %s", code, b)
 	}
 }
 

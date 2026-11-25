@@ -4,14 +4,18 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -67,6 +71,7 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/sessions/{id}/file", s.putFile)
 
 	m.HandleFunc("POST /api/sessions/{id}/upload", s.upload)
+	m.HandleFunc("GET /api/sessions/{id}/preview", s.preview)
 	m.HandleFunc("GET /ws", s.ws)
 	m.HandleFunc("GET /", s.serveUI)
 }
@@ -614,6 +619,120 @@ func (s *Server) putFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// preview serves a file in browser-viewable form (SPEC §17.2):
+// text/images/pdf directly; pptx/docx/xlsx via LibreOffice → PDF when
+// available; otherwise 415 with a JSON "open externally" fallback.
+func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
+	_, wc := s.handle(w, r)
+	if wc == nil {
+		return
+	}
+	rel := r.URL.Query().Get("path")
+	p := resolvePreviewPath(r.Context(), wc.h, rel)
+	if p == "" {
+		writeErr(w, 404, "file not found in workspace or scratchpad")
+		return
+	}
+	fi, err := os.Stat(p)
+	if err != nil || fi.IsDir() {
+		writeErr(w, 404, "not a file")
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(p))
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg":
+		http.ServeFile(w, r, p)
+		return
+	case ".pdf":
+		w.Header().Set("Content-Type", "application/pdf")
+		http.ServeFile(w, r, p)
+		return
+	case ".md", ".txt", ".csv", ".json", ".yaml", ".yml", ".log":
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		http.ServeFile(w, r, p)
+		return
+	case ".pptx", ".docx", ".xlsx":
+		if pdf, err := s.toPDF(r.Context(), wc.h, p, fi); err == nil {
+			w.Header().Set("Content-Type", "application/pdf")
+			http.ServeFile(w, r, pdf)
+			return
+		}
+		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{
+			"error": "no preview available", "fallback": "download",
+		})
+		return
+	default:
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		http.ServeFile(w, r, p)
+	}
+}
+
+// resolvePreviewPath accepts a workspace-relative/absolute path or any
+// scratchpad file (outputs/attachments), workspace winning ties.
+func resolvePreviewPath(ctx context.Context, h *app.Handle, rel string) string {
+	if rel == "" {
+		return ""
+	}
+	if p, err := h.Writer.Grants().Check("", relPath(h.Cwd, rel), false); err == nil {
+		if fi, serr := os.Stat(p.Path); serr == nil && !fi.IsDir() {
+			return p.Path
+		}
+	}
+	base := filepath.Base(rel)
+	for _, cand := range []string{
+		filepath.Join(h.Scratch, "outputs", base),
+		filepath.Join(h.Scratch, "attachments", base),
+		filepath.Join(h.Scratch, base),
+		rel, // absolute scratchpad path as returned by run_python
+	} {
+		if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
+			return cand
+		}
+	}
+	return ""
+}
+
+// toPDF converts office documents via LibreOffice (optional dependency),
+// caching by path+mtime in the scratchpad previews folder.
+func (s *Server) toPDF(ctx context.Context, h *app.Handle, path string, fi os.FileInfo) (string, error) {
+	bin, err := exec.LookPath("soffice")
+	if err != nil {
+		if bin, err = exec.LookPath("libreoffice"); err != nil {
+			return "", err
+		}
+	}
+	key := sha256hex(fmt.Sprintf("%s|%d", path, fi.ModTime().UnixNano()))
+	dir := filepath.Join(h.Scratch, "previews")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	out := filepath.Join(dir, key+".pdf")
+	if _, err := os.Stat(out); err == nil {
+		return out, nil
+	}
+	cctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, bin, "--headless", "--convert-to", "pdf", "--outdir", dir, path)
+	cmd.Env = append(os.Environ(), "HOME="+dir)
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	// soffice writes <dir>/<base>.pdf
+	generated := filepath.Join(dir, strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))+".pdf")
+	if _, err := os.Stat(generated); err != nil {
+		return "", err
+	}
+	if err := os.Rename(generated, out); err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+func sha256hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
 }
 
 // upload accepts a multipart file into the session scratchpad
