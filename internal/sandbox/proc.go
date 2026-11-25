@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"time"
 )
 
@@ -142,17 +143,17 @@ func tier2Command(ctx context.Context, tool string, req ProcRequest, pythonpath 
 			"python3", "-c", req.Code,
 		}
 		cmd := exec.CommandContext(ctx, "bwrap", args...)
-		cmd.Env = append(env, "PYTHONPATH=/tmp/paperworks",
+		cmd.Env = append(slices.Clone(env), "PYTHONPATH=/tmp/paperworks",
 			"INPUTS_DIR=/tmp/inputs", "OUTPUTS_DIR=/tmp/outputs", "TMPDIR=/tmp")
 		return cmd, nil
 	case "nsjail":
 		cmd := exec.CommandContext(ctx, "nsjail", "--", "python3", "-c", req.Code)
-		cmd.Env = append(env, "INPUTS="+req.InputsDir, "OUTPUTS="+req.OutputsDir)
+		cmd.Env = append(slices.Clone(env), "INPUTS="+req.InputsDir, "OUTPUTS="+req.OutputsDir)
 		return cmd, nil // config file left to operators; capability-gated
 	case "sandbox-exec":
 		profile := `(version 1)(allow default)(deny network*)`
 		cmd := exec.CommandContext(ctx, "sandbox-exec", "-p", profile, "python3", "-c", req.Code)
-		cmd.Env = append(env, "INPUTS="+req.InputsDir, "OUTPUTS="+req.OutputsDir, "PYTHONPATH="+pythonpath)
+		cmd.Env = append(slices.Clone(env), "INPUTS="+req.InputsDir, "OUTPUTS="+req.OutputsDir, "PYTHONPATH="+pythonpath)
 		return cmd, nil
 	case "docker":
 		cmd := exec.CommandContext(ctx, "docker", "run", "--rm", "-i", "--network", "none",

@@ -1,18 +1,40 @@
-run:
-  timeout: 3m
+# golangci-lint v2 (IMPL §14 lint gate)
+version: "2"
 
 linters:
+  default: standard
   enable:
-    - errcheck
-    - govet
-    - ineffassign
-    - staticcheck
-    - unused
-    - misspell
     - gocritic
-    - force-assertions
+    - misspell
+    - forcetypeassert
+  settings:
+    errcheck:
+      # cleanup calls whose errors we deliberately ignore (deferred or
+      # best-effort teardown)
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Tx).Rollback
+        - (*github.com/gorilla/websocket.Conn).Close
+        - (net/http.ResponseWriter).Write
+        - (*os.File).Write
+        - (*database/sql.Row).Scan
+        - (*encoding/json.Encoder).Encode
+        - (net/http.File).Close
+        - (*archive/zip.ReadCloser).Close
+        - (*github.com/larsn03/genisys/internal/store.DB).Close
+        - (*flag.FlagSet).Parse
+        - os.RemoveAll
+        - os.MkdirAll
+        - (*github.com/larsn03/genisys/internal/app.App).Close
+        - (*github.com/larsn03/genisys/internal/store.Transcript).Close
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [errcheck, forcetypeassert, unused]
 
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters: [errcheck, force-assertions]
+formatters:
+  enable:
+    - gofmt

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -77,7 +78,7 @@ func (ReadLines) Execute(_ context.Context, raw json.RawMessage, w *tools.World)
 	if end >= len(lines) {
 		b.WriteString("<EOF>")
 	} else {
-		b.WriteString(fmt.Sprintf("[continuation: %d more lines — call again with start_line=%d]", len(lines)-end, end+1))
+		fmt.Fprintf(&b, "[continuation: %d more lines — call again with start_line=%d]", len(lines)-end, end+1)
 	}
 	if longLine {
 		b.WriteString("\n[hint: contains long lines — use read_file_chars for exact slices]")
@@ -186,7 +187,7 @@ func (ListDir) Execute(_ context.Context, raw json.RawMessage, w *tools.World) t
 	}
 	sortStrings(dirs)
 	sortStrings(files)
-	out := append(dirs, files...)
+	out := append(slices.Clone(dirs), files...)
 	if len(out) == 0 {
 		out = []string{"(empty)"}
 	}

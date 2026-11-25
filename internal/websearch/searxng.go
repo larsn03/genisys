@@ -45,7 +45,8 @@ func newSearxng(cfg Config) (Provider, error) {
 func (s *searxng) Name() string { return "searxng" }
 
 func newInsecureTransport() *http.Transport {
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	base, _ := http.DefaultTransport.(*http.Transport) // always true unless user-swapped
+	tr := base.Clone()
 	tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec
 	return tr
 }

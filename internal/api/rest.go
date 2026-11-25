@@ -479,10 +479,10 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if in.Title != nil {
-		s.App.DB.SetSessionTitle(row.ID, *in.Title)
+		_ = s.App.DB.SetSessionTitle(row.ID, *in.Title)
 	}
 	if in.Pinned != nil {
-		s.App.DB.SetSessionPinned(row.ID, *in.Pinned)
+		_ = s.App.DB.SetSessionPinned(row.ID, *in.Pinned)
 	}
 	updated, _ := s.App.DB.GetSession(row.ID)
 	writeJSON(w, 200, updated)

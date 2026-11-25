@@ -35,10 +35,7 @@ func TestResumeAfterCrash(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { _, _ = s1.Run(ctx, "list"); close(done) }()
-	for {
-		if len(s1.Messages()) >= 3 { // user, assistant+call, tool
-			break
-		}
+	for len(s1.Messages()) < 3 { // user, assistant+call, tool
 	}
 	cancel()
 	<-done

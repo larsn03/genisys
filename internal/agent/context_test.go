@@ -36,9 +36,6 @@ func TestAgingKeepsPairing(t *testing.T) {
 	for _, m := range aged {
 		if m.Role == "tool" {
 			toolIDs = append(toolIDs, m.ToolCallID)
-			if m.Content != agedPlaceholder && m.ToolCallID > "t8" {
-				// recent ones keep content — fine
-			}
 		}
 		for _, tc := range m.ToolCalls {
 			callIDs = append(callIDs, tc.ID)

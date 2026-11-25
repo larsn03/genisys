@@ -76,13 +76,6 @@ func (w *World) MarkRead(canonicalPath string) {
 	}
 }
 
-func (w *World) sink() events.Sink {
-	if w.Emit != nil {
-		return w.Emit
-	}
-	return events.Discard
-}
-
 // Result is a tool outcome. Content is already shaped (SPEC §7.3).
 type Result struct {
 	Content string

@@ -242,7 +242,7 @@ ui: { theme: system }
 	}
 	// key order preserved: version before default_model before endpoints before agent
 	idx := func(sub string) int { return strings.Index(s, sub) }
-	if !(idx("version:") < idx("default_model:") && idx("default_model:") < idx("endpoints:") && idx("endpoints:") < idx("agent:")) {
+	if idx("version:") >= idx("default_model:") || idx("default_model:") >= idx("endpoints:") || idx("endpoints:") >= idx("agent:") {
 		t.Errorf("key order not preserved:\n%s", s)
 	}
 	// the modified key itself keeps its position and its trailing comment survives

@@ -75,10 +75,7 @@ func htmlToMarkdown(htmlSrc string) string {
 }
 
 type renderCtx struct {
-	heading int
-	li      bool
-	inPre   bool
-	link    *string
+	inPre bool
 }
 
 var dropTags = map[string]bool{
@@ -235,6 +232,7 @@ func renderChildren(b *strings.Builder, n *html.Node, ctx renderCtx) {
 
 func renderTable(b *strings.Builder, n *html.Node) {
 	b.WriteString("\n\n")
+	//nolint:staticcheck // SA1021: recursive closure needs the var first
 	var walkRow func(*html.Node, bool)
 	walkRow = func(row *html.Node, header bool) {
 		b.WriteString("|")

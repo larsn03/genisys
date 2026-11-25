@@ -1,6 +1,6 @@
 module github.com/larsn03/genisys
 
-go 1.27.4
+go 1.26.0
 
 require (
 	github.com/bmatcuk/doublestar/v4 v4.10.7

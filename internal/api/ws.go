@@ -118,7 +118,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		}
 		switch f.Type {
 		case "prompt":
-			go wk.Prompt(context.Background(), f.Text, f.Mode)
+			go func() { _, _ = wk.Prompt(context.Background(), f.Text, f.Mode) }() // errors ride the event ledger
 		case "stop":
 			wk.Stop()
 		case "permission":
@@ -134,5 +134,5 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeEvent(conn *websocket.Conn, f WSEvent) {
-	conn.WriteJSON(f)
+	_ = conn.WriteJSON(f) // write pump reports broken connections
 }

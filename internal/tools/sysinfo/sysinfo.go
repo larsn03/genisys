@@ -8,7 +8,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/larsn03/genisys/internal/tools"
@@ -274,14 +273,4 @@ var helpLines = []string{
   mcp_status                    configured MCP servers + tool counts
   web_probe                     test the configured web search backend
   models_list                   models available from configured endpoints`,
-}
-
-// sortKeys is used by tests for deterministic comparison.
-func sortKeys(m map[string]any) []string {
-	ks := make([]string, 0, len(m))
-	for k := range m {
-		ks = append(ks, k)
-	}
-	sort.Strings(ks)
-	return ks
 }

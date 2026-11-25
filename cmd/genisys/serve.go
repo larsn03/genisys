@@ -67,7 +67,7 @@ func serveCmd(args []string) error {
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		srv.Sup.CloseAll()
-		httpSrv.Shutdown(shutCtx)
+		_ = httpSrv.Shutdown(shutCtx) // best-effort within the timeout
 	}
 	return nil
 }

@@ -210,7 +210,7 @@ func (c *Client) pump(ctx context.Context, body io.ReadCloser, events chan<- Str
 	// Always surface a terminal Done event (unless cancelled) so the loop
 	// has one unambiguous stop signal regardless of how the stream ended.
 	if ctx.Err() == nil {
-		send(StreamEvent{Kind: KindDone})
+		_ = send(StreamEvent{Kind: KindDone}) // channel may already be closed
 	}
 }
 

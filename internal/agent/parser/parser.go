@@ -126,14 +126,11 @@ func ParseText(text string) (prose string, calls []model.ToolCall, errs []string
 			}
 		} else if body == "" {
 			tc.Function.Arguments = "{}"
+		} else if repaired, err := RepairJSON(body); err != nil {
+			outErrs = append(outErrs, name+": "+err.Error())
+			tc.Function.Arguments = body // hand raw to the loop → invalid_json result
 		} else {
-			repaired, err := RepairJSON(body)
-			if err != nil {
-				outErrs = append(outErrs, name+": "+err.Error())
-				tc.Function.Arguments = body // hand raw to the loop → invalid_json result
-			} else {
-				tc.Function.Arguments = string(repaired)
-			}
+			tc.Function.Arguments = string(repaired)
 		}
 		out = append(out, tc)
 		rest = rest[:open.start] + rest[consumeEnd:] // remove span (prose kept around it)

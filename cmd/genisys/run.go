@@ -250,17 +250,17 @@ repl:
 			}
 		}
 		line = strings.TrimSpace(line)
-		switch {
-		case line == "":
+		switch line {
+		case "":
 			continue
-		case line == "/quit" || line == "/exit":
+		case "/quit", "/exit":
 			break repl
-		case line == "/pending":
+		case "/pending":
 			for _, ij := range as.Interjections().Pending() {
 				fmt.Printf("  [%s] %s: %.60q\n", ij.Mode, ij.ID, ij.Text)
 			}
 			continue
-		case line == "/session":
+		case "/session":
 			fmt.Printf("  id %s  project %s\n", row.ID, proj.ID)
 			continue
 		}

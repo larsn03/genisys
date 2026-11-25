@@ -188,8 +188,8 @@ func (SearchLine) Execute(ctx context.Context, raw json.RawMessage, w *tools.Wor
 	}
 	if info.IsDir() {
 		st.walk(root, searchOne)
-	} else if !searchOne(root, filepath.Base(root)) {
-		// single-file search
+	} else {
+		searchOne(root, filepath.Base(root)) // single-file search; stop signal irrelevant
 	}
 	_ = stop
 	if found == 0 {

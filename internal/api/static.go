@@ -5,6 +5,7 @@
 package api
 
 import (
+	"io"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -20,13 +21,12 @@ func (s *Server) serveUI(w http.ResponseWriter, r *http.Request) {
 		path = "index.html"
 	}
 	if f, err := s.ui.Open(path); err == nil {
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		if d, serr := fs.Stat(s.ui, path); serr == nil && !d.IsDir() {
-			http.ServeContent(w, r, path, d.ModTime(), f.(interface {
-				Read([]byte) (int, error)
-				Seek(int64, int) (int64, error)
-			}))
-			return
+			if rs, ok := f.(io.ReadSeeker); ok {
+				http.ServeContent(w, r, path, d.ModTime(), rs)
+				return
+			}
 		}
 	}
 	// SPA fallback
@@ -36,5 +36,5 @@ func (s *Server) serveUI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(idx)
+	_, _ = w.Write(idx)
 }
