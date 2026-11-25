@@ -1,10 +1,12 @@
 # Genisys — Product & Technical Specification
 
-**Version:** 0.2 (draft) · **Date:** 2026-11-24 · **Status:** Pre-implementation
+**Version:** 0.3 (draft) · **Date:** 2026-11-25 · **Status:** Pre-implementation
 
 > Locked decisions: implementation language **Go** (single static binary, §19) ·
 > **every bit of configuration is YAML** (§18) · user-controlled **interjection**
-> (interrupt-now vs. read-later, §7.4).
+> (interrupt-now vs. read-later, §7.4) · primary deployment artifact is the
+> **Linux AppImage** (§19.1); macOS and Windows releases are planned for the
+> future.
 
 > Genisys is a faithful recreation of **LM Studio Bionic** — the desktop AI agent
 > for open models (released July 2026 by Element Labs) — re-targeted at any remote
@@ -72,6 +74,7 @@
 | G10 | **Skills** (Agent Skills / `SKILL.md` spec) with `@`-mention palette | A Claude-Code-authored skill runs unmodified |
 | G11 | **User-controlled interjection**: a prompt sent while the agent is working lets the user choose *interrupt now* or *must read it later* (§7.4) | Both modes demonstrably work: interrupt kills the in-flight action cleanly; queue is delivered at the next boundary and cannot be skipped |
 | G12 | **Go implementation, single static binary** (backend + embedded UI + embedded sandbox runtime; no external runtime deps) | `go build ./cmd/genisys` yields one executable that runs the whole app |
+| G13 | **Primary deployment: Linux AppImage.** The single binary (§19) ships as an AppImage with desktop entry + icon; it is the reference release channel. macOS and Windows releases are **planned for the future** (same binary, platform shells TBD) | `Genisys.appimage` downloads, `chmod +x`, runs on a clean x86_64 Linux distro (Ubuntu LTS + Fedora + Arch smoke-tested) with zero other installs; win/mac cross-compile stays green in CI so future releases are a packaging task, not a code task |
 
 ### 1.2 Non-Goals (v1)
 
@@ -871,6 +874,13 @@ genisys/
 - **Process model:** single process; each running session = one goroutine tree with a cancellable `context.Context` (interrupt = `cancel()` + tool-process group kill, §7.4). CPU-heavy work (sandbox runs, document conversions) runs on a bounded worker pool.
 - **Session supervisor:** goroutine registry; orphan recovery after restart (status `running` → `interrupted`, resumable); global concurrency cap (default 4 parallel LLM workers; queue beyond).
 
+### 19.1 Packaging & Distribution (normative)
+
+- **Primary artifact (v1): Linux AppImage** (`Genisys-<version>-x86_64.appimage`). The single static binary + embedded UI/sandbox assets (§19, G12) is packed with a `.desktop` entry (`StartupWMClass=genisys`), icon, and launcher that starts `genisys serve` and opens the default browser. No system dependencies; runs on glibc distros (Ubuntu LTS, Fedora, Arch smoke-tested in CI); static linking keeps it distro-agnostic. Users on other layouts use the raw binary or tarball.
+- **macOS and Windows: planned, not shipped in v1.** The Go code cross-compiles for `darwin/arm64`, `darwin/amd64`, and `windows/amd64` and CI keeps those builds green (§25 Test strategy), so a future release is a packaging exercise (`.dmg` / `.msi` or portable `.exe`, browser-open behavior already identical) rather than a port. Platform-specific polish (menu-bar presence, keychain, file associations) is deliberately deferred.
+- **Versioning:** `genisys version` prints semver + git SHA (ldflags stamp); AppImage filename carries both. Release flow: tag → `make dist` → GitHub Release (AppImage + checksums first; tarballs for all GOOS/GOARCH as raw artifacts).
+- **Update path (future):** AppImage `--appimage-self-update` or an in-app "new version" banner checking GitHub releases; out of scope for v1.
+
 ---
 
 ## 20. Frontend Architecture
@@ -973,8 +983,8 @@ Three-pane layout, projects/sessions CRUD, WS event stream, chat with live trace
 **AC:** acceptance corpus row 4 (live preview); a Claude Code skill runs unmodified; MCP echo server callable.
 
 ### M5 — Polish
-Fork, side-by-side panes, background badges, compaction, checkpoint browser, settings completeness, dark mode.
-**AC:** all §4.2 rows pass on a mid-size open model (e.g. 32B class) with zero harness errors.
+Fork, side-by-side panes, background badges, compaction, checkpoint browser, settings completeness, dark mode. **Release engineering: Linux AppImage (G13, primary artifact) built in CI with desktop entry + icon; win/mac cross-compile stays green as release candidates for future packaging.**
+**AC:** all §4.2 rows pass on a mid-size open model (e.g. 32B class) with zero harness errors; the AppImage runs the full acceptance corpus on a clean Linux VM with no other installs.
 
 ### Test strategy
 - **Golden transcript tests:** recorded endpoint responses replayed against the loop (parser, tool dispatch, checkpointing).
@@ -988,7 +998,7 @@ Fork, side-by-side panes, background badges, compaction, checkpoint browser, set
 
 | # | Question | Leaning |
 |---|---|---|
-| Q1 | Ship as browser-based local app (v1) vs. Tauri wrapper from day one? | Web-first; Tauri in M5+ (webview needed for real browser tab + keyring) |
+| Q1 | Ship as browser-based local app (v1) vs. Tauri wrapper from day one? | Web-first; **Linux desktop vehicle is the AppImage (§19.1)** — it already delivers "double-click → app in browser". Tauri/webview shell considered later (real browser tab + keyring); macOS/Windows shells follow the same decision |
 | Q2 | Which endpoint(s) to develop against first? | User's remote OpenAI-compatible server (URL/model TBD) |
 | Q3 | Voice input (Voxtral/local whisper) timing | Post-M5 extension; UI mic button stays disabled |
 | Q4 | Multi-endpoint load balancing / auto-fallback model | Post-v1 |

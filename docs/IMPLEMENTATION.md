@@ -404,7 +404,7 @@ MCP echo callable; web toggle fully disables web tools.
 | P6-4 | Settings UI complete: Endpoints CRUD + Test connection, Skills manager, Browser allow-list, theme light/dark/system (both palettes per `docs/images/`) | §5.5/§18 | every settings screen round-trips YAML (comment-preservation e2e) | 2.5 |
 | P6-5 | Error cards everywhere: Retry / Switch model / Edit last message; parse-failure nudges visible | §23 | endpoint kill/restore mid-session recovers | 1.5 |
 | P6-6 | `genisys_tool` + `introspection`/`file-history` built-in skills | §9.8/§14 | agent can summarize its own session | 1 |
-| P6-7 | Distribution: `make dist` (4 OS/arch tarballs), version stamping, `genisys version`; README install docs | G12 | CI artifacts downloadable; cold start on clean Linux VM < 2 min incl. config | 1 |
+| P6-7 | Distribution: **Linux AppImage (SPEC §19.1/G13, primary artifact)** via `make dist` (appimagetool: binary + .desktop + icon) + 4 OS/arch tarballs, version stamping, `genisys version`; README install docs. macOS/Windows releases planned for the future — cross-compile stays green, packaging deferred | G12, G13 | AppImage runs on clean Ubuntu LTS VM (`chmod +x`, no other installs); CI artifacts downloadable; cold start on clean Linux VM < 2 min incl. config | 1 |
 
 **Exit gate (SPEC M5 AC):** all corpus rows pass on a mid-size open model (32B class)
 with zero harness errors.
@@ -462,7 +462,7 @@ fuzz-brief  → 60 s fuzz on agent/parser
 e2e-mock    → Playwright against genisys serve + mock endpoint
 nightly     → fuzz-10m, property, crash-matrix, endpoint-matrix (real servers,
               self-hosted runner), soak
-release     → tag → make dist (4 tarballs + checksums) → GitHub Release
+release     → tag → make dist (AppImage [primary, G13] + 4 tarballs + checksums) → GitHub Release
 ```
 
 Mock endpoint: small Go test server (`cmd/mockendpoint`, testdata-driven) that replays
