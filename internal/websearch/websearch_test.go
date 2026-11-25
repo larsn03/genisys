@@ -97,15 +97,18 @@ func TestProbeOK(t *testing.T) {
 
 func TestBearerAndParams(t *testing.T) {
 	var gotAuth, gotLang, gotCat string
-	c := fake(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotLang = r.URL.Query().Get("language")
 		gotCat = r.URL.Query().Get("categories")
 		searxHandler(nil)(w, r)
-	})
-	c.bearer = "tok123"
-	c.cfg.Language = "de"
-	c.cfg.Categories = "it"
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("GENISYS_TEST_SEARCH_KEY", "tok123")
+	c, err := New(Config{BaseURL: srv.URL, APIKeyEnv: "GENISYS_TEST_SEARCH_KEY", Language: "de", Categories: "it"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := c.Search(context.Background(), []string{"q"}); err != nil {
 		t.Fatal(err)
 	}
@@ -134,3 +137,70 @@ func TestSnippetClip(t *testing.T) {
 }
 
 var _ = fmt.Sprintf
+
+// P5-3: tavily + brave providers against httptest fakes.
+func TestTavilyProvider(t *testing.T) {
+	var gotAuth, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"results":[{"title":"T","url":"http://t","content":"c"}]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GENISYS_TAVILY_KEY", "tv-key")
+	c, err := New(Config{Provider: "tavily", BaseURL: srv.URL, APIKeyEnv: "GENISYS_TAVILY_KEY"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs, err := c.Search(context.Background(), []string{"q"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs) != 1 || rs[0].URL != "http://t" {
+		t.Fatalf("results=%v", rs)
+	}
+	if gotAuth != "Bearer tv-key" || gotPath != "/search" {
+		t.Errorf("auth=%q path=%q", gotAuth, gotPath)
+	}
+	if p := c.Probe(context.Background()); p != "ok" {
+		t.Errorf("probe=%s", p)
+	}
+}
+
+func TestBraveProvider(t *testing.T) {
+	var gotToken string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotToken = r.Header.Get("X-Subscription-Token")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"web":{"results":[{"title":"B","url":"http://b","description":"d"}]}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("GENISYS_BRAVE_KEY", "br-key")
+	c, err := New(Config{Provider: "brave", BaseURL: srv.URL, APIKeyEnv: "GENISYS_BRAVE_KEY"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs, err := c.Search(context.Background(), []string{"q"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs) != 1 || rs[0].Title != "B" {
+		t.Fatalf("results=%v", rs)
+	}
+	if gotToken != "br-key" {
+		t.Errorf("token=%q", gotToken)
+	}
+}
+
+func TestProviderMissingToken(t *testing.T) {
+	if _, err := New(Config{Provider: "tavily", APIKeyEnv: "GENISYS_MISSING_KEY"}); err == nil {
+		t.Error("tavily without token must fail at construction")
+	}
+}
+
+func TestUnknownProvider(t *testing.T) {
+	if _, err := New(Config{Provider: "google"}); err == nil {
+		t.Error("unknown provider must fail")
+	}
+}

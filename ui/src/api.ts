@@ -39,8 +39,10 @@ export const api = {
     req<import("./types").SessionRow>("PATCH", `/api/sessions/${id}`, body),
   archiveSession: (id: string) => req<{ ok: boolean }>("DELETE", `/api/sessions/${id}`),
   messages: (id: string) => req<import("./types").MessageRow[]>("GET", `/api/sessions/${id}/messages`),
-  prompt: (id: string, text: string, mode?: string) =>
-    req<{ state: string }>("POST", `/api/sessions/${id}/prompt`, { text, mode }),
+  prompt: (id: string, text: string, mode?: string, skills?: string[]) =>
+    req<{ state: string }>("POST", `/api/sessions/${id}/prompt`, { text, mode, skills }),
+  skills: () =>
+    req<{ skills: import("./types").SkillInfo[] }>("GET", "/api/skills"),
   stop: (id: string) => req<{ stopped: boolean }>("POST", `/api/sessions/${id}/stop`),
   answer: (id: string, permId: number, granted: boolean) =>
     req<{ ok: boolean }>("POST", `/api/sessions/${id}/permissions/${permId}`, { granted }),
@@ -62,6 +64,7 @@ export const api = {
     req<{ default: string; models: import("./types").ModelInfo[] }>("GET", "/api/models"),
   gitStatus: (id: string) =>
     req<import("./types").GitStatus>("GET", `/api/sessions/${id}/git-status`),
+  browserOrigins: () => req<{ origins: string[] }>("GET", "/api/browser/origins"),
   previewURL: (id: string, path: string) =>
     `/api/sessions/${id}/preview?path=${encodeURIComponent(path)}&token=${TOKEN}`,
   fileURL: (id: string, path: string) =>

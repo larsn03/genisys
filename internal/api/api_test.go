@@ -31,6 +31,14 @@ type mockModel struct {
 	scripts [][]string // per-session scripts are overkill; one global queue
 	queue   []string
 	delay   time.Duration
+	bodies  []string // captured request bodies
+}
+
+// body returns all captured request bodies concatenated.
+func (m *mockModel) body() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return strings.Join(m.bodies, "\n")
 }
 
 func newMockModel(t *testing.T, responses []string, delay time.Duration) *mockModel {
@@ -40,6 +48,8 @@ func newMockModel(t *testing.T, responses []string, delay time.Duration) *mockMo
 			time.Sleep(m.delay)
 		}
 		m.mu.Lock()
+		b, _ := io.ReadAll(r.Body)
+		m.bodies = append(m.bodies, string(b))
 		resp := ""
 		if len(m.queue) > 0 {
 			resp = m.queue[0]
@@ -76,6 +86,7 @@ type env struct {
 	app    *app.App
 	srv    *api.Server
 	hs     *httptest.Server
+	mock   *mockModel
 	wsdir  string
 	client *http.Client
 	token  string
@@ -107,7 +118,7 @@ endpoints:
 	srv := api.New(a, cfgPath, nil, log.New(io.Discard, "", 0))
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(hs.Close)
-	return &env{app: a, srv: srv, hs: hs, wsdir: wsdir, client: hs.Client(), token: srv.Token}
+	return &env{app: a, srv: srv, hs: hs, wsdir: wsdir, client: hs.Client(), token: srv.Token, mock: mock}
 }
 
 func (e *env) do(t *testing.T, method, path string, body any) (int, []byte) {
@@ -675,5 +686,86 @@ func TestConcurrencyCap(t *testing.T) {
 	}
 	if q := e.srv.Sup.Queued(); q != 0 {
 		t.Errorf("queue not drained: %d", q)
+	}
+}
+
+// --- P5: skills + browser origins -------------------------------------------
+
+func TestSkillsLifecycle(t *testing.T) {
+	e := newEnv(t, []string{sseText("ok")}, 0)
+	var out struct {
+		Skills []struct {
+			Name    string `json:"name"`
+			Builtin bool   `json:"builtin"`
+		} `json:"skills"`
+	}
+	e.mustJSON(t, "GET", "/api/skills", nil, &out)
+	names := map[string]bool{}
+	for _, s := range out.Skills {
+		names[s.Name] = true
+	}
+	for _, want := range []string{"skill-management", "documents-presentations-spreadsheets"} {
+		if !names[want] {
+			t.Errorf("builtin skill %q not listed (have %v)", want, names)
+		}
+	}
+
+	// install from raw content (URL path is the same code after fetch)
+	code, b := e.do(t, "POST", "/api/skills/install", map[string]string{
+		"content": "---\nname: my-skill\ndescription: Does a thing.\n---\n\nsteps\n",
+	})
+	if code != 201 {
+		t.Fatalf("install → %d: %s", code, b)
+	}
+	e.mustJSON(t, "GET", "/api/skills", nil, &out)
+	names = map[string]bool{}
+	for _, s := range out.Skills {
+		names[s.Name] = true
+	}
+	if !names["my-skill"] {
+		t.Error("installed skill not listed")
+	}
+
+	// invalid skill → 422
+	if code, _ := e.do(t, "POST", "/api/skills/install", map[string]string{"content": "junk"}); code != 422 {
+		t.Errorf("invalid install → %d want 422", code)
+	}
+	// remove user skill
+	e.mustJSON(t, "DELETE", "/api/skills/my-skill", nil, nil)
+	e.mustJSON(t, "GET", "/api/skills", nil, &out)
+	names = map[string]bool{}
+	for _, s := range out.Skills {
+		names[s.Name] = true
+	}
+	if names["my-skill"] {
+		t.Error("skill survived delete")
+	}
+	// builtins refuse removal
+	if code, _ := e.do(t, "DELETE", "/api/skills/skill-management", nil); code != 422 {
+		t.Errorf("builtin delete → %d want 422", code)
+	}
+}
+
+func TestPromptWithSkills(t *testing.T) {
+	e := newEnv(t, []string{sseText("using the skill")}, 0)
+	sid := e.newSession(t)
+	var res map[string]string
+	e.mustJSON(t, "POST", "/api/sessions/"+sid+"/prompt",
+		map[string]any{"text": "make me a deck", "skills": []string{"documents-presentations-spreadsheets"}}, &res)
+	e.waitIdle(t, sid)
+	// the mock endpoint captured the user message with the harness line
+	if !strings.Contains(e.mock.body(), "explicitly requested skill") {
+		t.Error("skill instruction line not appended to the user turn")
+	}
+}
+
+func TestBrowserOrigins(t *testing.T) {
+	e := newEnv(t, []string{sseText("ok")}, 0)
+	var out struct {
+		Origins []string `json:"origins"`
+	}
+	e.mustJSON(t, "GET", "/api/browser/origins", nil, &out)
+	if out.Origins == nil || len(out.Origins) != 0 {
+		t.Errorf("expected empty non-null origins, got %v", out.Origins)
 	}
 }

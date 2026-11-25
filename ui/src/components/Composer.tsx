@@ -82,7 +82,7 @@ export function Composer() {
               }
             }}
             rows={Math.min(8, Math.max(1, text.split("\n").length))}
-            placeholder={running ? "Type to interject…" : "Ask Genisys to do something… ( @ for files )"}
+            placeholder={running ? "Type to interject…" : "Ask Genisys… ( @ files · @skill: skills )"}
             className="w-full bg-transparent resize-none outline-none px-4 pt-3.5 pb-1 text-[14px] placeholder:text-faint"
           />
           <div className="flex items-center gap-2 px-3 pb-2.5">
@@ -164,6 +164,7 @@ function Palette({
   taRef: React.RefObject<HTMLTextAreaElement | null>;
 }) {
   const files = useStore((s) => s.files);
+  const skills = useStore((s) => s.skills);
   const [sel, setSel] = useState(0);
 
   const query = useMemo(() => {
@@ -171,14 +172,33 @@ function Palette({
     return m ? m[2] : null;
   }, [text]);
 
-  const matches = useMemo(() => {
+  // merged palette entries: @file refs and @skill: chips (SPEC §14)
+  type Entry = { insert: string; label: string; kind: "file" | "skill"; desc?: string };
+  const matches = useMemo<Entry[]>(() => {
     if (query === null) return [];
     const q = query.toLowerCase();
-    return files
-      .filter((f) => f.name.toLowerCase().includes(q))
-      .slice(0, 8)
-      .map((f) => f.name);
-  }, [query, files]);
+    const skillQ = q.startsWith("skill:") ? q.slice(6) : null;
+    const sk =
+      skillQ !== null
+        ? skills
+            .filter((s) => s.name.toLowerCase().includes(skillQ))
+            .slice(0, 6)
+            .map((s) => ({
+              insert: `@skill:${s.name} `,
+              label: `skill:${s.name}`,
+              kind: "skill" as const,
+              desc: s.description,
+            }))
+        : [];
+    const fi =
+      skillQ !== null
+        ? []
+        : files
+            .filter((f) => f.name.toLowerCase().includes(q))
+            .slice(0, 8)
+            .map((f) => ({ insert: f.name + " ", label: f.name, kind: "file" as const }));
+    return [...sk, ...fi];
+  }, [query, files, skills]);
 
   useEffect(() => setSel(0), [matches.length]);
   paletteOpen.value = matches.length > 0;
@@ -194,7 +214,7 @@ function Palette({
       else if (e.key === "ArrowUp") { e.preventDefault(); setSel((s) => (s - 1 + matches.length) % matches.length); }
       else if (e.key === "Tab" || e.key === "Enter") {
         e.preventDefault();
-        onPick(matches[sel]);
+        onPick(matches[sel].insert);
       }
     };
     ta.addEventListener("keydown", h);
@@ -203,16 +223,17 @@ function Palette({
 
   return (
     <div className="absolute bottom-full mb-2 left-4 w-72 bg-panel border border-line rounded-xl shadow-2xl py-1.5 z-20 text-[13px]">
-      {matches.map((name, i) => (
+      {matches.map((m, i) => (
         <div
-          key={name}
-          onClick={() => onPick(name)}
-          className={`px-3 py-1.5 cursor-pointer flex gap-2 ${
+          key={m.insert}
+          onClick={() => onPick(m.insert)}
+          className={`px-3 py-1.5 cursor-pointer flex gap-2 items-baseline ${
             i === sel ? "bg-panel2 text-ink" : "text-mute"
           }`}
         >
-          <span className="text-accent2">@</span>
-          <span className="font-mono truncate">{name}</span>
+          <span className="text-accent2">{m.kind === "skill" ? "⚡" : "@"}</span>
+          <span className="font-mono truncate">{m.label}</span>
+          {m.desc && <span className="truncate text-[11px] text-faint">{m.desc}</span>}
         </div>
       ))}
       <div className="px-3 pt-1 text-[10px] text-faint">↑↓ navigate · Tab/Enter insert</div>

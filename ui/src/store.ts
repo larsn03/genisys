@@ -48,6 +48,10 @@ interface State {
   layout: PaneState;
   error: string | null;
   preview: string | null; // path currently open in the preview overlay
+  browser: { url: string; nonce: number } | null; // in-app browser pane (SPEC §5.4)
+  browserOrigins: string[]; // allow-list from config
+  skills: import("./types").SkillInfo[]; // @-palette feed (SPEC §14)
+  selectedAt: number; // ms epoch of last session select (focus-or-open heuristic)
 
   refreshSessions: () => Promise<void>;
   refreshProjects: () => Promise<void>;
@@ -71,6 +75,8 @@ interface State {
   refreshCheckpoints: () => Promise<void>;
   revertStep: (stepId: string) => Promise<void>;
 
+  openBrowser: (url: string) => void;
+  closeBrowser: () => void;
   openPreview: (path: string) => void;
   closePreview: () => void;
   setShowAll: (v: boolean) => void;
@@ -104,6 +110,10 @@ export const useStore = create<State>((set, get) => ({
   layout: loadLayout(),
   error: null,
   preview: null,
+  browser: null,
+  browserOrigins: [],
+  skills: [],
+  selectedAt: 0,
 
   async loadModels() {
     try {
@@ -154,6 +164,8 @@ export const useStore = create<State>((set, get) => ({
       fileContent: "",
       dirPath: "",
       contextTokens: 0,
+      browser: null,
+      selectedAt: Date.now(),
       contextWindow:
         get().models.find((m) => m.ref === sess?.model_ref)?.context_window || 32768,
     });
@@ -169,6 +181,10 @@ export const useStore = create<State>((set, get) => ({
         if (ev.type === "usage") {
           patch.contextTokens = Number(ev.payload?.prompt_tokens ?? 0) || s.contextTokens;
         }
+        if (ev.type === "ui_open_url") {
+          const url = String(ev.payload?.url ?? "");
+          if (url) patch.browser = { url, nonce: (get().browser?.nonce ?? 0) + 1 };
+        }
         if (ev.type === "file_changed" && s.current === id) {
           void get().refreshFiles(s.dirPath);
           void get().refreshGit();
@@ -181,6 +197,18 @@ export const useStore = create<State>((set, get) => ({
     void get().refreshFiles("");
     void get().refreshGit();
     void get().refreshCheckpoints();
+    if (get().skills.length === 0) {
+      api
+        .skills()
+        .then((r) => set({ skills: r.skills }))
+        .catch(() => {});
+    }
+    if (get().browserOrigins.length === 0) {
+      api
+        .browserOrigins()
+        .then((o) => set({ browserOrigins: o.origins }))
+        .catch(() => {});
+    }
   },
 
   async createSession(projectId) {
@@ -212,8 +240,12 @@ export const useStore = create<State>((set, get) => ({
   async send(text, mode) {
     const id = get().current;
     if (!id) return;
+    // @skill:name chips → skills[] on the prompt API (SPEC §14 explicit
+    // invocation); the harness appends the read-SKILL.md-first line.
+    const skillNames = [...text.matchAll(/(?:^|\s)@skill:([\w.-]+)/g)].map((m) => m[1]);
+    const clean = text.replace(/(?:^|\s)@skill:([\w.-]+)/g, " ").trim();
     try {
-      const res = await api.prompt(id, text, mode);
+      const res = await api.prompt(id, clean, mode, skillNames.length ? skillNames : undefined);
       if (res.state === "started") set({ running: true });
     } catch (e) {
       set({ error: String(e) });
@@ -325,6 +357,9 @@ export const useStore = create<State>((set, get) => ({
     void get().refreshCheckpoints();
   },
 
+  openBrowser: (url: string) =>
+    set((s) => ({ browser: { url, nonce: (s.browser?.nonce ?? 0) + 1 } })),
+  closeBrowser: () => set({ browser: null }),
   openPreview: (path) => set({ preview: path }),
   closePreview: () => set({ preview: null }),
 

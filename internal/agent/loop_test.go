@@ -288,3 +288,75 @@ func TestLoopDetectionNudge(t *testing.T) {
 		t.Error("loop-detection nudge missing")
 	}
 }
+
+// --- P5-1: sub-agent (SPEC §12) ----------------------------------------------
+
+func TestSubagentLocator(t *testing.T) {
+	// fixture "monorepo"
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "internal/http"), 0o755)
+	os.WriteFile(filepath.Join(dir, "internal/http/client.go"),
+		[]byte("package http\n\n// Client dials the API.\ntype Client struct{}\n"), 0o644)
+
+	// scripted locator: search → final answer with citation
+	mock := newMock(t,
+		sseToolCall("t1", "search_file_line", `{"pattern":"dials the API","path":"."}`),
+		sseText("Found the HTTP client.\n\nCitations:\n- internal/http/client.go:3 — doc comment of Client"))
+	var evs []events.Event
+	parent := Deps{
+		Client: mock.client(t), Model: "m", Cwd: dir,
+		Tools:     subagentTools(),
+		Events:    events.SinkFunc(func(e events.Event) { evs = append(evs, e) }),
+		ToolsMode: "none", // XML fallback: the mock emits <search_file_line> tags? no — native calls need tools; keep native below
+	}
+	parent.ToolsMode = "native"
+	parent.Tools = subagentTools()
+	out := SubagentQuery(context.Background(), parent, "internal/http", "the HTTP client", "step_9")
+	if !strings.Contains(out, "internal/http/client.go:3") {
+		t.Fatalf("locator output missing citation: %q", out)
+	}
+	// restricted toolset in the request (SPEC §9.4: exactly 4 tools)
+	req := mock.request(0)
+	toolsJSON, _ := json.Marshal(req["tools"])
+	for _, want := range []string{"search_file_line", "find_files", "list_dir", "read_file_lines"} {
+		if !strings.Contains(string(toolsJSON), want) {
+			t.Errorf("subagent tools missing %s: %s", want, toolsJSON)
+		}
+	}
+	if n := strings.Count(string(toolsJSON), `"name"`); n != 4 {
+		t.Errorf("subagent toolset not restricted: %d tools", n)
+	}
+	// locator system prompt reached the model
+	if !mock.messagesContain(0, "code locator") {
+		t.Error("locator system prompt missing")
+	}
+	// nested trace attribution
+	var nested int
+	for _, e := range evs {
+		m, _ := e.Payload.(map[string]any)
+		if m != nil && m["subagent"] == true && m["parent_step"] == "step_9" {
+			nested++
+		}
+	}
+	if nested == 0 {
+		t.Error("sub-agent events not tagged for nested trace")
+	}
+}
+
+func TestSubagentFailureIsolation(t *testing.T) {
+	mock := newMock(t, sseText("unused"))
+	c := mock.client(t)
+	// point at a dead port: every completion fails
+	dead, err := model.New("http://127.0.0.1:1/v1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c
+	out := SubagentQuery(context.Background(), Deps{
+		Client: dead, Model: "m", Cwd: t.TempDir(), Tools: subagentTools(),
+		Retry: &model.RetryPolicy{MaxAttempts: 1, Base: time.Millisecond},
+	}, ".", "anything", "s1")
+	if !strings.HasPrefix(out, "[query failed:") {
+		t.Fatalf("expected failure string, got %q", out)
+	}
+}

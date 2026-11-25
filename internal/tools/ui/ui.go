@@ -67,13 +67,24 @@ func (openURL) Execute(_ context.Context, raw json.RawMessage, w *tools.World) t
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "file") {
 		return tools.Result{Content: "error: url must be http(s) or file://", IsError: true}
 	}
-	if u.Scheme != "file" && !isLocalhost(u.Hostname()) {
-		// allow-list lives in config (browser.allowed_origins); localhost is always fine
-		w.Emit.Emit(events.Event{Type: "ui_open_url", Payload: map[string]any{"url": a.URL, "needs_allowlist": true}})
-		return tools.Result{Content: "requested " + a.URL + " (subject to the browser allow-list)"}
+	if u.Scheme != "file" && !isLocalhost(u.Hostname()) && !originAllowed(u, w.BrowserOrigins) {
+		return tools.Result{Content: "error: origin " + u.Scheme + "://" + u.Host +
+			" is not localhost and not in browser.allowed_origins — ask the user to add it in Settings", IsError: true}
 	}
 	w.Emit.Emit(events.Event{Type: "ui_open_url", Payload: map[string]any{"url": a.URL}})
 	return tools.Result{Content: "opened " + a.URL}
+}
+
+// originAllowed matches "scheme://host[:port]" entries from
+// browser.allowed_origins (SPEC §5.4).
+func originAllowed(u *url.URL, allowed []string) bool {
+	want := u.Scheme + "://" + u.Host
+	for _, a := range allowed {
+		if strings.TrimRight(a, "/") == want {
+			return true
+		}
+	}
+	return false
 }
 
 func isLocalhost(h string) bool {

@@ -1,6 +1,7 @@
-// Right panel (SPEC §5.4): tabstrip Files · Editor · History. FilesTree
-// carries git badges + context menu; EditorPane is Monaco (lazy);
-// History lists shadow checkpoints with per-step rollback.
+// Right panel (SPEC §5.4): tabstrip Files · Editor · History · Browser.
+// FilesTree carries git badges + context menu; EditorPane is Monaco (lazy);
+// History lists shadow checkpoints with per-step rollback; Browser is the
+// in-app preview pane (localhost + allow-list, focus-or-open semantics).
 
 import { Suspense, lazy, useEffect, useState } from "react";
 import { useStore } from "../store";
@@ -9,22 +10,31 @@ const EditorPane = lazy(() =>
   import("./EditorPane").then((m) => ({ default: m.EditorPane })),
 );
 
-type Tab = "files" | "editor" | "history";
+type Tab = "files" | "editor" | "history" | "browser";
 
 export function RightPanel() {
   const [tab, setTab] = useState<Tab>("files");
   const filePath = useStore((s) => s.filePath);
   const checkpoints = useStore((s) => s.checkpoints);
   const width = useStore((s) => s.layout.right);
+  const browser = useStore((s) => s.browser);
 
   useEffect(() => {
     if (filePath) setTab("editor");
   }, [filePath]);
 
+  // focus-or-open (SPEC §9.6): a ui_open_url event switches to the
+  // browser tab unless we are still inside the initial replay window
+  // (selectedAt), which would steal focus on every session reload.
+  useEffect(() => {
+    if (!browser) return;
+    if (Date.now() - useStore.getState().selectedAt > 1500) setTab("browser");
+  }, [browser?.nonce]);
+
   return (
     <aside className="shrink-0 border-l border-line bg-panel/50 flex flex-col" style={{ width }}>
       <div className="flex border-b border-line text-[13px]">
-        {(["files", "editor", "history"] as const).map((t) => (
+        {(["files", "editor", "history", "browser"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -40,6 +50,9 @@ export function RightPanel() {
             )}
             {t === "history" && checkpoints.length > 0 && (
               <span className="ml-1.5 text-faint text-xs">{checkpoints.length}</span>
+            )}
+            {t === "browser" && browser && (
+              <span className="ml-1.5 text-accent text-xs">●</span>
             )}
           </button>
         ))}
@@ -62,6 +75,7 @@ export function RightPanel() {
         </Suspense>
       )}
       {tab === "history" && <HistoryTab />}
+      {tab === "browser" && <BrowserPane />}
     </aside>
   );
 }
@@ -229,6 +243,114 @@ function HistoryTab() {
       {!checkpoints.length && (
         <div className="text-faint text-xs p-2">
           No checkpoints yet — they are created automatically whenever a file changes.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BrowserPane() {
+  const browser = useStore((s) => s.browser);
+  const origins = useStore((s) => s.browserOrigins);
+  const [addr, setAddr] = useState("");
+
+  useEffect(() => {
+    if (browser) setAddr(browser.url);
+  }, [browser?.nonce]);
+
+  if (!browser) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center text-faint text-xs gap-2 p-6 text-center">
+        <div className="text-2xl">🌐</div>
+        <div>
+          The in-app browser shows localhost dev servers and allow-listed
+          sites. Ask the agent to `open_url_in_app_browser`.
+        </div>
+      </div>
+    );
+  }
+
+  let allowed = false;
+  let parsed: URL | null = null;
+  try {
+    parsed = new URL(browser.url);
+    allowed =
+      ["http:", "https:", "file:"].includes(parsed.protocol) &&
+      (parsed.hostname === "localhost" ||
+        parsed.hostname === "127.0.0.1" ||
+        origins.includes(parsed.origin));
+  } catch {
+    /* fallthrough */
+  }
+
+  const go = () => {
+    try {
+      const u = new URL(addr);
+      useStore.getState().openBrowser(u.toString());
+    } catch {
+      /* keep old */
+    }
+  };
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0">
+      <form
+        className="flex gap-1.5 p-2 border-b border-line"
+        onSubmit={(e) => {
+          e.preventDefault();
+          go();
+        }}
+      >
+        <input
+          value={addr}
+          onChange={(e) => setAddr(e.target.value)}
+          className="flex-1 bg-field border border-line rounded px-2 py-1 text-xs font-mono text-ink"
+          placeholder="http://localhost:…"
+          spellCheck={false}
+        />
+        <button className="text-xs px-2 py-1 rounded bg-field border border-line text-mute hover:text-ink">
+          go
+        </button>
+        <a
+          href={browser.url}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs px-2 py-1 rounded bg-field border border-line text-mute hover:text-ink"
+          title="Open externally"
+        >
+          ↗
+        </a>
+      </form>
+      {allowed ? (
+        <iframe
+          key={`${browser.nonce}`}
+          src={browser.url}
+          title="in-app browser"
+          className="flex-1 w-full bg-white"
+          sandbox="allow-scripts allow-forms allow-same-origin allow-popups"
+        />
+      ) : (
+        <div className="flex-1 p-4 text-xs text-faint">
+          {parsed ? (
+            <>
+              <span className="text-warn">
+                {parsed.origin} is not localhost and not in
+                browser.allowed_origins.
+              </span>{" "}
+              Add it via Settings → Browser, or open it{" "}
+              <a
+                href={browser.url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent underline"
+              >
+                externally
+              </a>
+              .
+            </>
+          ) : (
+            "invalid url"
+          )}
         </div>
       )}
     </div>

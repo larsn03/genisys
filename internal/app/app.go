@@ -13,11 +13,15 @@ import (
 	"github.com/larsn03/genisys/internal/agent"
 	"github.com/larsn03/genisys/internal/agent/events"
 	"github.com/larsn03/genisys/internal/apiconfig"
+	"github.com/larsn03/genisys/internal/mcp"
 	"github.com/larsn03/genisys/internal/model"
+	"github.com/larsn03/genisys/internal/skills"
 	"github.com/larsn03/genisys/internal/store"
 	"github.com/larsn03/genisys/internal/tools"
 	exectool "github.com/larsn03/genisys/internal/tools/exec"
 	"github.com/larsn03/genisys/internal/tools/fileio"
+	"github.com/larsn03/genisys/internal/tools/find"
+	"github.com/larsn03/genisys/internal/tools/mcptools"
 	"github.com/larsn03/genisys/internal/tools/mutate"
 	"github.com/larsn03/genisys/internal/tools/perms"
 	py "github.com/larsn03/genisys/internal/tools/py"
@@ -33,6 +37,7 @@ type App struct {
 	Cfg  *apiconfig.Config
 	DB   *store.DB
 	Root string // ~/.genisys
+	MCP  *mcp.Manager
 }
 
 // Open loads config, opens+migrates the db and runs the SPEC §23 boot
@@ -64,11 +69,26 @@ func Open(cfgPath, dbPath string) (*App, error) {
 		db.Close()
 		return nil, err
 	}
-	return &App{Cfg: cfg, DB: db, Root: filepath.Dir(dbPath)}, nil
+	mgrCfgs := []mcp.ServerConfig{}
+	for _, srv := range cfg.MCPServers {
+		if !srv.Enabled {
+			continue
+		}
+		mgrCfgs = append(mgrCfgs, mcp.ServerConfig{
+			Name: srv.Name, Command: srv.Command, Args: srv.Args, Env: srv.Env,
+			URL: srv.URL, Transport: srv.Transport,
+		})
+	}
+	return &App{Cfg: cfg, DB: db, Root: filepath.Dir(dbPath), MCP: mcp.NewManager(mgrCfgs)}, nil
 }
 
-// Close releases the db handle.
-func (a *App) Close() error { return a.DB.Close() }
+// Close releases the db handle and any live MCP connections.
+func (a *App) Close() error {
+	if a.MCP != nil {
+		a.MCP.CloseAll()
+	}
+	return a.DB.Close()
+}
 
 // ProjectFor returns (creating on demand) the project bound to a folder.
 func (a *App) ProjectFor(cwd string) (*store.Project, error) {
@@ -128,6 +148,12 @@ func (a *App) Registry(withUI bool) *tools.Registry {
 	r.Add(perms.ScratchpadFolder{})
 	r.Add(py.Tool{})
 	r.Add(py.LoadAttachment{})
+	r.Add(find.Find{})
+	if a.MCP != nil && !a.MCP.Empty() {
+		for _, t := range mcptools.Tools() {
+			r.Add(t)
+		}
+	}
 	if withUI {
 		for _, t := range ui.Tools() {
 			r.Add(t)
@@ -135,23 +161,76 @@ func (a *App) Registry(withUI bool) *tools.Registry {
 	}
 	if c := a.Websearch(); c != nil {
 		r.Add(web.Search{C: c})
+		r.Add(web.Extract{})
 	}
 	return r
 }
 
-// Websearch builds the SearXNG client or nil (SPEC §9.5).
+// subagentModel resolves agent.subagent_model (SPEC §12): null = same
+// model as the session; otherwise a full "endpoint/model" ref.
+func subagentModel(a *App, sessionRef string) string {
+	if a.Cfg.Agent.SubagentModel == nil {
+		return ""
+	}
+	m := *a.Cfg.Agent.SubagentModel
+	if m == "" || m == sessionRef {
+		return ""
+	}
+	return m
+}
+
+// SkillUserRoot is where user skills and built-ins live (SPEC §14).
+func (a *App) SkillUserRoot() string { return filepath.Join(a.Root, "skills") }
+
+// Skills materializes built-ins and discovers all enabled roots
+// (SPEC §14): builtin → project → user → imported (first name wins).
+func (a *App) Skills(proj *store.Project) []skills.Skill {
+	builtinRoot := filepath.Join(a.SkillUserRoot(), "_builtin")
+	skills.MaterializeBuiltin(builtinRoot)
+	var roots []string
+	if proj != nil {
+		roots = append(roots, filepath.Join(proj.WorkspacePath, "skills"))
+	}
+	roots = append(roots, a.SkillUserRoot())
+	for _, r := range a.Cfg.Skills.ImportFromOtherApps {
+		roots = append(roots, apiconfig.ExpandPath(r))
+	}
+	out := skills.Discover(append([]string{builtinRoot}, roots...)...)
+	for i := range out {
+		out[i].Builtin = out[i].Root == builtinRoot
+	}
+	return out
+}
+
+// Websearch builds the configured provider client or nil (SPEC §9.5/§16).
+// provider "none" or a missing token/base_url disables the web tools
+// entirely — the toggle removes them from the schema.
 func (a *App) Websearch() *websearch.Client {
-	if !a.Cfg.Web.SearchEnabled || a.Cfg.Web.Provider != "searxng" || a.Cfg.Web.Searxng.BaseURL == "" {
+	if !a.Cfg.Web.SearchEnabled {
 		return nil
 	}
-	c, err := websearch.New(websearch.Config{
-		BaseURL:          a.Cfg.Web.Searxng.BaseURL,
-		Language:         a.Cfg.Web.Searxng.Language,
-		Categories:       a.Cfg.Web.Searxng.Categories,
-		TimeoutMs:        a.Cfg.Web.Searxng.TimeoutMs,
-		APIKeyEnv:        a.Cfg.Web.Searxng.APIKeyEnv,
-		AllowInsecureTLS: a.Cfg.Web.Searxng.AllowInsecureTLS,
-	})
+	var cfg websearch.Config
+	switch a.Cfg.Web.Provider {
+	case "tavily":
+		cfg = websearch.Config{Provider: "tavily", BaseURL: a.Cfg.Web.Tavily.BaseURL,
+			APIKeyEnv: a.Cfg.Web.Tavily.APIKeyEnv, TimeoutMs: 10000}
+	case "brave":
+		cfg = websearch.Config{Provider: "brave", BaseURL: a.Cfg.Web.Brave.BaseURL,
+			APIKeyEnv: a.Cfg.Web.Brave.APIKeyEnv, TimeoutMs: 10000}
+	case "none":
+		return nil
+	default: // searxng
+		if a.Cfg.Web.Searxng.BaseURL == "" {
+			return nil
+		}
+		cfg = websearch.Config{
+			Provider: "searxng", BaseURL: a.Cfg.Web.Searxng.BaseURL,
+			Language: a.Cfg.Web.Searxng.Language, Categories: a.Cfg.Web.Searxng.Categories,
+			TimeoutMs: a.Cfg.Web.Searxng.TimeoutMs, APIKeyEnv: a.Cfg.Web.Searxng.APIKeyEnv,
+			AllowInsecureTLS: a.Cfg.Web.Searxng.AllowInsecureTLS,
+		}
+	}
+	c, err := websearch.New(cfg)
 	if err != nil {
 		return nil
 	}
@@ -247,9 +326,13 @@ func (a *App) OpenSession(row *store.Session, proj *store.Project, o SessionOpts
 	deps := agent.Deps{
 		Client: client, Model: ref, Tools: o.Registry, ToolsMode: mode,
 		MaxSteps: a.Cfg.Agent.MaxSteps, ShellTimeout: a.Cfg.Agent.ShellTimeoutMs,
-		RuntimeDir: filepath.Join(a.Root, "runtime"),
-		Persona:    row.Persona,
-		Cwd:        cwd, Scratchpad: scratch, Events: o.Emit,
+		RuntimeDir:     filepath.Join(a.Root, "runtime"),
+		Persona:        row.Persona,
+		Skills:         a.Skills(proj),
+		SubagentModel:  subagentModel(a, ref),
+		MCP:            a.MCP,
+		BrowserOrigins: a.Cfg.Browser.AllowedOrigins,
+		Cwd:            cwd, Scratchpad: scratch, Events: o.Emit,
 		SessionID: row.ID, Transcript: tr, DB: a.DB, ProjectID: projectID(proj),
 		Writer: writer, Perms: broker, Interj: o.Interj,
 	}

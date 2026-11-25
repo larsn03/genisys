@@ -70,6 +70,14 @@ type WebConfig struct {
 	SearchEnabled bool          `yaml:"search_enabled"`
 	Provider      string        `yaml:"provider"` // searxng | tavily | brave | none
 	Searxng       SearxngConfig `yaml:"searxng"`
+	Tavily        KeyConfig     `yaml:"tavily"`
+	Brave         KeyConfig     `yaml:"brave"`
+}
+
+// KeyConfig parameterizes the optional commercial providers (§16).
+type KeyConfig struct {
+	APIKeyEnv string `yaml:"api_key_env"`
+	BaseURL   string `yaml:"base_url"` // optional override (testing)
 }
 
 // SearxngConfig configures the default search backend: any reachable

@@ -10,7 +10,9 @@ import (
 
 	"github.com/larsn03/genisys/internal/agent/events"
 	"github.com/larsn03/genisys/internal/agent/parser"
+	"github.com/larsn03/genisys/internal/mcp"
 	"github.com/larsn03/genisys/internal/model"
+	"github.com/larsn03/genisys/internal/skills"
 	"github.com/larsn03/genisys/internal/store"
 	"github.com/larsn03/genisys/internal/tools"
 	"github.com/larsn03/genisys/internal/workspace"
@@ -18,21 +20,26 @@ import (
 
 // Deps wires a session (constructor injection happens in cmd/, IMPL §2).
 type Deps struct {
-	Client       *model.Client
-	Model        string
-	Tools        *tools.Registry
-	ToolsMode    string // native | xml | none (SPEC §13.2 profile)
-	MaxSteps     int    // default 64 (SPEC §7.1)
-	Cwd          string
-	Scratchpad   string
-	Events       events.Sink
-	Interj       *Interjector
-	Retry        *model.RetryPolicy
-	Writer       *workspace.Writer
-	Perms        *workspace.Broker
-	ShellTimeout int    // ms; default 10000
-	RuntimeDir   string // sandbox guest cache root (SPEC §17.1)
-	Persona      string // coder | work (SPEC §8)
+	Client         *model.Client
+	Model          string
+	Tools          *tools.Registry
+	ToolsMode      string // native | xml | none (SPEC §13.2 profile)
+	MaxSteps       int    // default 64 (SPEC §7.1)
+	Cwd            string
+	Scratchpad     string
+	Events         events.Sink
+	Interj         *Interjector
+	Retry          *model.RetryPolicy
+	Writer         *workspace.Writer
+	Perms          *workspace.Broker
+	ShellTimeout   int            // ms; default 10000
+	RuntimeDir     string         // sandbox guest cache root (SPEC §17.1)
+	Persona        string         // coder | work (SPEC §8)
+	Skills         []skills.Skill // <available-skills> (SPEC §14)
+	SubagentModel  string         // model_ref override for agentic_find (SPEC §12)
+	SystemOverride string         // pre-rendered system prompt (sub-agents, §12)
+	MCP            *mcp.Manager   // configured MCP servers (SPEC §15)
+	BrowserOrigins []string       // browser.allowed_origins (SPEC §5.4)
 
 	// P2 persistence (optional; nil = in-memory only).
 	SessionID  string
@@ -211,12 +218,19 @@ func (s *Session) inject(ijs []Interjection, boundary string) {
 // commits the assistant message. Returns (prose, tool calls); a nil-prose
 // nil-calls return with nil error means "interrupted, re-enter the loop".
 func (s *Session) oneStep(stepCtx context.Context, stepID string) (string, []model.ToolCall, error) {
-	sysPrompt, err := RenderSystem(PromptEnv{
-		Cwd: s.d.Cwd, Scratchpad: s.d.Scratchpad, Persona: s.d.Persona,
-		ToolsMode: s.d.ToolsMode, Tools: s.d.Tools.Definitions(),
-	})
-	if err != nil {
-		return "", nil, err
+	var sysPrompt string
+	var err error
+	if s.d.SystemOverride != "" {
+		sysPrompt = s.d.SystemOverride
+	} else {
+		sysPrompt, err = RenderSystem(PromptEnv{
+			Cwd: s.d.Cwd, Scratchpad: s.d.Scratchpad, Persona: s.d.Persona,
+			Skills:    s.d.Skills,
+			ToolsMode: s.d.ToolsMode, Tools: s.d.Tools.Definitions(),
+		})
+		if err != nil {
+			return "", nil, err
+		}
 	}
 	req := model.ChatRequest{
 		Model:    s.d.Model,
@@ -293,8 +307,13 @@ func (s *Session) runTools(ctx context.Context, stepID string, calls []model.Too
 			s.emit(events.ToolStarted, map[string]any{"step": stepID, "call_id": calls[i].ID, "tool": calls[i].Function.Name, "args": firstLineOf(calls[i].Function.Arguments, 100)})
 			res := s.d.Tools.Execute(ctx, calls[i], &tools.World{
 				Cwd: s.d.Cwd, Scratchpad: s.d.Scratchpad, ShellTimeout: s.d.ShellTimeout,
-				RuntimeDir: s.d.RuntimeDir,
-				Emit:       s.d.Events, StepID: stepID, Writer: s.d.Writer, Perms: s.d.Perms,
+				RuntimeDir:     s.d.RuntimeDir,
+				MCP:            s.d.MCP,
+				BrowserOrigins: s.d.BrowserOrigins,
+				Subagent: func(c context.Context, cwd, target string) string {
+					return SubagentQuery(c, s.d, cwd, target, stepID)
+				},
+				Emit: s.d.Events, StepID: stepID, Writer: s.d.Writer, Perms: s.d.Perms,
 			})
 			results[i] = res
 			// SPEC §7.2: persist the moment it lands (order among a
@@ -316,12 +335,19 @@ func (s *Session) runTools(ctx context.Context, stepID string, calls []model.Too
 func (s *Session) wrapUp(ctx context.Context) (string, error) {
 	s.appendMsg("", model.Message{Role: "user",
 		Content: "[harness] Step budget exhausted. Summarize the current state: what is done, what remains, and any blocker. Do not call tools."})
-	sysPrompt, err := RenderSystem(PromptEnv{
-		Cwd: s.d.Cwd, Scratchpad: s.d.Scratchpad, Persona: s.d.Persona,
-		ToolsMode: s.d.ToolsMode, Tools: s.d.Tools.Definitions(),
-	})
-	if err != nil {
-		return "", err
+	var sysPrompt string
+	var err error
+	if s.d.SystemOverride != "" {
+		sysPrompt = s.d.SystemOverride
+	} else {
+		sysPrompt, err = RenderSystem(PromptEnv{
+			Cwd: s.d.Cwd, Scratchpad: s.d.Scratchpad, Persona: s.d.Persona,
+			Skills:    s.d.Skills,
+			ToolsMode: s.d.ToolsMode, Tools: s.d.Tools.Definitions(),
+		})
+		if err != nil {
+			return "", err
+		}
 	}
 	comp, err := s.d.Client.CompleteWith(ctx, model.ChatRequest{
 		Model:    s.d.Model,

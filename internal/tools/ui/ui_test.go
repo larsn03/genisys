@@ -91,3 +91,42 @@ func TestDeliverScratchpadToWorkspace(t *testing.T) {
 		t.Errorf("file_changed events=%d want >=1", changed)
 	}
 }
+
+// P5-7: open_url_in_app_browser allow-list (SPEC §5.4).
+func TestOpenURLAllowList(t *testing.T) {
+	reg := tools.NewRegistry()
+	for _, tl := range ui.Tools() {
+		reg.Add(tl)
+	}
+	var mu sync.Mutex
+	var evs []events.Event
+	w := &tools.World{Emit: events.SinkFunc(func(e events.Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		evs = append(evs, e)
+	}), BrowserOrigins: []string{"https://example.com"}}
+	call := func(url string) tools.Result {
+		return reg.Execute(context.Background(), model.ToolCall{ID: "c", Type: "function",
+			Function: model.ToolCallFunction{Name: "open_url_in_app_browser", Arguments: `{"url":"` + url + `"}`}}, w)
+	}
+	if r := call("http://localhost:5173/app"); r.IsError {
+		t.Errorf("localhost must always open: %s", r.Content)
+	}
+	if r := call("https://example.com/docs"); r.IsError {
+		t.Errorf("allow-listed origin must open: %s", r.Content)
+	}
+	if r := call("https://evil.io/x"); !r.IsError || !strings.Contains(r.Content, "allowed_origins") {
+		t.Errorf("non-allow-listed origin must be refused: %q", r.Content)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var opened int
+	for _, e := range evs {
+		if e.Type == "ui_open_url" {
+			opened++
+		}
+	}
+	if opened != 2 {
+		t.Errorf("ui_open_url events=%d want 2", opened)
+	}
+}

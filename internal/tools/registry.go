@@ -11,20 +11,24 @@ import (
 	"strings"
 
 	"github.com/larsn03/genisys/internal/agent/events"
+	"github.com/larsn03/genisys/internal/mcp"
 	"github.com/larsn03/genisys/internal/model"
 	"github.com/larsn03/genisys/internal/workspace"
 )
 
 // World is everything a tool may touch (IMPL §4).
 type World struct {
-	Cwd          string
-	Scratchpad   string
-	ShellTimeout int // ms, from config agent.shell_timeout_ms
-	Emit         events.Sink
-	StepID       string
-	Writer       *workspace.Writer // nil = P1 behavior (no grants/checkpoints)
-	Perms        *workspace.Broker // nil = no permission UI
-	RuntimeDir   string            // sandbox guest cache root ("" = run_python unavailable)
+	Cwd            string
+	Scratchpad     string
+	ShellTimeout   int // ms, from config agent.shell_timeout_ms
+	Emit           events.Sink
+	StepID         string
+	Writer         *workspace.Writer                                    // nil = P1 behavior (no grants/checkpoints)
+	Perms          *workspace.Broker                                    // nil = no permission UI
+	RuntimeDir     string                                               // sandbox guest cache root ("" = run_python unavailable)
+	Subagent       func(ctx context.Context, cwd, target string) string // agentic_find runner (SPEC §12); nil = unavailable
+	MCP            *mcp.Manager                                         // MCP servers (SPEC §15); nil = none configured
+	BrowserOrigins []string                                             // browser.allowed_origins (SPEC §5.4)
 }
 
 // Access resolves a tool path and enforces the grant table (SPEC §10.2).

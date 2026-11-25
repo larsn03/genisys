@@ -1,20 +1,15 @@
-// Package websearch implements the SearXNG backend of web_search
-// (SPEC §9.5, normative): any reachable instance, local or remote, over
-// the JSON API. No third-party fallback — queries go only to the
-// configured instance.
+// Package websearch implements the pluggable web_search backends
+// (SPEC §9.5/§16): SearXNG (default, normative), Tavily, Brave. Results
+// are merged, deduplicated, and cached 24 h. Queries go only to the
+// configured provider — no silent third-party fallback.
 package websearch
 
 import (
 	"context"
-	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
 	"net/url"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -36,22 +31,28 @@ type Result struct {
 	Content string
 }
 
-// Config mirrors apiconfig.SearxngConfig (kept decoupled: no import cycle
-// risk and the client is testable standalone).
+// Config selects and parameterizes a provider (kept decoupled from
+// apiconfig; the client is testable standalone).
 type Config struct {
-	BaseURL          string
-	Language         string // "auto"/"" → omit
-	Categories       string // "" → omit
+	Provider         string // "" | searxng | tavily | brave
+	BaseURL          string // searxng: required; tavily/brave: optional override
+	Language         string // "auto"/"" → omit (searxng)
+	Categories       string // "" → omit (searxng)
 	TimeoutMs        int
-	APIKeyEnv        string
+	APIKeyEnv        string // bearer/subscription token env var
 	AllowInsecureTLS bool
 }
 
-// Client queries one SearXNG instance.
+// Provider is a search backend behind the common contract (SPEC §16).
+type Provider interface {
+	Name() string
+	SearchOne(ctx context.Context, q string) ([]Result, error)
+	Probe(ctx context.Context) string
+}
+
+// Client wraps one provider with merge + 24 h cache (SPEC §16).
 type Client struct {
-	cfg    Config
-	hc     *http.Client
-	bearer string
+	p Provider
 
 	mu    sync.Mutex
 	cache map[string]cacheEntry
@@ -62,27 +63,31 @@ type cacheEntry struct {
 	expires time.Time
 }
 
-// New builds a client; validates the base URL shape.
+// New builds a client for the configured provider.
 func New(cfg Config) (*Client, error) {
-	if cfg.BaseURL == "" {
-		return nil, errors.New("websearch: base_url is empty")
-	}
-	if _, err := url.Parse(cfg.BaseURL); err != nil {
-		return nil, fmt.Errorf("websearch: bad base_url: %w", err)
-	}
 	if cfg.TimeoutMs <= 0 {
 		cfg.TimeoutMs = 10000
 	}
-	hc := &http.Client{Timeout: time.Duration(cfg.TimeoutMs) * time.Millisecond}
-	if cfg.AllowInsecureTLS {
-		hc.Transport = newInsecureTransport()
+	var p Provider
+	var err error
+	switch cfg.Provider {
+	case "", "searxng":
+		p, err = newSearxng(cfg)
+	case "tavily":
+		p, err = newTavily(cfg)
+	case "brave":
+		p, err = newBrave(cfg)
+	default:
+		return nil, fmt.Errorf("websearch: unknown provider %q", cfg.Provider)
 	}
-	c := &Client{cfg: cfg, hc: hc, cache: map[string]cacheEntry{}}
-	if cfg.APIKeyEnv != "" {
-		c.bearer = os.Getenv(cfg.APIKeyEnv)
+	if err != nil {
+		return nil, err
 	}
-	return c, nil
+	return &Client{p: p, cache: map[string]cacheEntry{}}, nil
 }
+
+// ProviderName reports the active backend (settings UI).
+func (c *Client) ProviderName() string { return c.p.Name() }
 
 // Search runs the queries (≤5) with max 2 concurrent requests and merges
 // results: dedupe by normalized URL, round-robin interleave, numbered by
@@ -139,7 +144,7 @@ func (c *Client) Search(ctx context.Context, queries []string) ([]Result, error)
 }
 
 func (c *Client) queryRetry(ctx context.Context, q string) ([]Result, error) {
-	rs, err := c.searchOne(ctx, q)
+	rs, err := c.p.SearchOne(ctx, q)
 	if err == nil || !transient(err) {
 		return rs, err
 	}
@@ -148,7 +153,7 @@ func (c *Client) queryRetry(ctx context.Context, q string) ([]Result, error) {
 		return nil, ctx.Err()
 	case <-time.After(500 * time.Millisecond):
 	}
-	return c.searchOne(ctx, q)
+	return c.p.SearchOne(ctx, q)
 }
 
 func transient(err error) bool {
@@ -157,82 +162,8 @@ func transient(err error) bool {
 		strings.Contains(err.Error(), "status 5")
 }
 
-func (c *Client) searchOne(ctx context.Context, q string) ([]Result, error) {
-	u := strings.TrimSuffix(c.cfg.BaseURL, "/") + "/search?"
-	v := url.Values{"q": {q}, "format": {"json"}}
-	if c.cfg.Language != "" && c.cfg.Language != "auto" {
-		v.Set("language", c.cfg.Language)
-	}
-	if c.cfg.Categories != "" && c.cfg.Categories != "general" {
-		v.Set("categories", c.cfg.Categories)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u+v.Encode(), nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "genisys/0.1 (+https://github.com/larsn03/genisys)")
-	if c.bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+c.bearer)
-	}
-	resp, err := c.hc.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUnreachable, err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUnreachable, err)
-	}
-	switch {
-	case resp.StatusCode == http.StatusUnauthorized:
-		return nil, ErrAuthRequired
-	case resp.StatusCode == http.StatusForbidden:
-		return nil, ErrJSONDisabled
-	case resp.StatusCode >= 500:
-		return nil, fmt.Errorf("%w: status %d", ErrUnreachable, resp.StatusCode)
-	case resp.StatusCode != http.StatusOK:
-		return nil, fmt.Errorf("searxng: unexpected status %d", resp.StatusCode)
-	}
-	if !strings.Contains(resp.Header.Get("Content-Type"), "json") && !json.Valid(body) {
-		return nil, ErrJSONDisabled // HTML answer: format not allowed
-	}
-	var payload struct {
-		Results []struct {
-			Title   string `json:"title"`
-			URL     string `json:"url"`
-			Content string `json:"content"`
-		} `json:"results"`
-	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, ErrNotSearxng
-	}
-	out := make([]Result, 0, len(payload.Results))
-	for _, r := range payload.Results {
-		if r.URL == "" {
-			continue
-		}
-		out = append(out, Result{Title: r.Title, URL: r.URL, Content: clip(r.Content, 400)})
-	}
-	return out, nil
-}
-
 // Probe performs one live round-trip and classifies (SPEC §9.5).
-func (c *Client) Probe(ctx context.Context) string {
-	_, err := c.searchOne(ctx, "genisys")
-	switch {
-	case err == nil:
-		return "ok"
-	case errors.Is(err, ErrJSONDisabled):
-		return "json-disabled"
-	case errors.Is(err, ErrAuthRequired):
-		return "auth-required"
-	case errors.Is(err, ErrUnreachable):
-		return "unreachable"
-	default:
-		return "not-searxng"
-	}
-}
+func (c *Client) Probe(ctx context.Context) string { return c.p.Probe(ctx) }
 
 // --- merge + cache helpers ---------------------------------------------------
 
@@ -307,13 +238,4 @@ func clip(s string, n int) string {
 		cut = n
 	}
 	return s[:cut] + "…"
-}
-
-// newInsecureTransport accepts self-signed internal instances — an
-// explicit user opt-in via web.searxng.allow_insecure_tls (SPEC §9.5).
-func newInsecureTransport() http.RoundTripper {
-	return &http.Transport{
-		TLSHandshakeTimeout: 5 * time.Second,
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true}, // #nosec G402 — opt-in
-	}
 }

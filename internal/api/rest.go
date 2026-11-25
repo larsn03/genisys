@@ -24,6 +24,7 @@ import (
 	"github.com/larsn03/genisys/internal/agent"
 	"github.com/larsn03/genisys/internal/apiconfig"
 	"github.com/larsn03/genisys/internal/app"
+	"github.com/larsn03/genisys/internal/skills"
 	"github.com/larsn03/genisys/internal/store"
 	"github.com/larsn03/genisys/internal/supervisor"
 	"github.com/larsn03/genisys/internal/workspace"
@@ -72,6 +73,17 @@ func (s *Server) routes() {
 
 	m.HandleFunc("POST /api/sessions/{id}/upload", s.upload)
 	m.HandleFunc("GET /api/sessions/{id}/preview", s.preview)
+
+	m.HandleFunc("GET /api/browser/origins", func(w http.ResponseWriter, r *http.Request) {
+		origins := s.App.Cfg.Browser.AllowedOrigins
+		if origins == nil {
+			origins = []string{}
+		}
+		writeJSON(w, 200, map[string]any{"origins": origins})
+	})
+	m.HandleFunc("GET /api/skills", s.listSkills)
+	m.HandleFunc("POST /api/skills/install", s.installSkill)
+	m.HandleFunc("DELETE /api/skills/{name}", s.deleteSkill)
 	m.HandleFunc("GET /ws", s.ws)
 	m.HandleFunc("GET /", s.serveUI)
 }
@@ -318,18 +330,115 @@ func (s *Server) sessionEvents(w http.ResponseWriter, r *http.Request) {
 
 // --- control ---------------------------------------------------------------------
 
+// listSkills feeds the @-palette and settings (SPEC §14).
+func (s *Server) listSkills(w http.ResponseWriter, r *http.Request) {
+	var proj *store.Project
+	if pid := r.URL.Query().Get("project"); pid != "" {
+		if p, err := s.App.DB.GetProject(pid); err == nil {
+			proj = p
+		}
+	}
+	out := s.App.Skills(proj)
+	if out == nil {
+		out = []skills.Skill{}
+	}
+	writeJSON(w, 200, map[string]any{"skills": out})
+}
+
+// installSkill fetches a raw SKILL.md URL, validates, and places it in
+// the user skills root (SPEC §14 skill-management flow, server-side twin).
+func (s *Server) installSkill(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		URL     string `json:"url"`
+		Content string `json:"content"`
+	}
+	if err := readJSON(r, &in); err != nil || (in.URL == "" && in.Content == "") {
+		writeErr(w, 400, "url or content is required")
+		return
+	}
+	content := in.Content
+	if content == "" {
+		if !strings.HasPrefix(in.URL, "http://") && !strings.HasPrefix(in.URL, "https://") {
+			writeErr(w, 400, "url must be http(s)")
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, in.URL, nil)
+		if err != nil {
+			writeErr(w, 400, err.Error())
+			return
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			writeErr(w, 502, "fetch failed: "+err.Error())
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != 200 {
+			writeErr(w, 502, fmt.Sprintf("fetch returned HTTP %d", resp.StatusCode))
+			return
+		}
+		b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if err != nil {
+			writeErr(w, 502, "fetch truncated: "+err.Error())
+			return
+		}
+		content = string(b)
+	}
+	sk, err := skills.Install(s.App.SkillUserRoot(), content)
+	if err != nil {
+		writeErr(w, 422, err.Error())
+		return
+	}
+	writeJSON(w, 201, sk)
+}
+
+func (s *Server) deleteSkill(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	for _, sk := range s.App.Skills(nil) {
+		if sk.Name == name {
+			if err := skills.Remove(sk); err != nil {
+				writeErr(w, 422, err.Error())
+				return
+			}
+			writeJSON(w, 200, map[string]string{"removed": name})
+			return
+		}
+	}
+	writeErr(w, 404, "skill not found")
+}
+
 func (s *Server) prompt(w http.ResponseWriter, r *http.Request) {
 	row := s.sessionRow(w, r)
 	if row == nil {
 		return
 	}
 	var in struct {
-		Text string `json:"text"`
-		Mode string `json:"mode"` // queue | interrupt (default queue)
+		Text   string   `json:"text"`
+		Mode   string   `json:"mode"`   // queue | interrupt (default queue)
+		Skills []string `json:"skills"` // explicit skill requests (SPEC §14)
 	}
 	if err := readJSON(r, &in); err != nil || in.Text == "" {
 		writeErr(w, 400, "text is required")
 		return
+	}
+	if names := in.Skills; len(names) > 0 {
+		avail := s.App.Skills(nil)
+		if p, perr := s.App.DB.GetSession(row.ID); perr == nil {
+			if proj, perr2 := s.App.DB.GetProject(p.ProjectID); perr2 == nil {
+				avail = s.App.Skills(proj)
+			}
+		}
+		byName := map[string]skills.Skill{}
+		for _, sk := range avail {
+			byName[sk.Name] = sk
+		}
+		for _, n := range names {
+			if sk, ok := byName[n]; ok {
+				in.Text += "\n" + skills.Instruction(sk)
+			}
+		}
 	}
 	wk, err := s.Sup.Worker(row.ID)
 	if err != nil {

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/larsn03/genisys/internal/model"
+	"github.com/larsn03/genisys/internal/skills"
 )
 
 //go:embed templates/system.tmpl
@@ -24,8 +25,9 @@ var systemTmpl = template.Must(template.New("system").Parse(systemTmplText))
 type PromptEnv struct {
 	Cwd        string
 	Scratchpad string
-	Persona    string // "" | "coder" | "work" (SPEC §8 personas)
-	ToolsMode  string // native | xml | none (SPEC §13.4)
+	Persona    string         // "" | "coder" | "work" (SPEC §8 personas)
+	Skills     []skills.Skill // <available-skills>, SPEC §14
+	ToolsMode  string         // native | xml | none (SPEC §13.4)
 	Tools      []model.Tool
 	Date       string
 	Timezone   string

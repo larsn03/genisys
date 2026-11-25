@@ -6,6 +6,7 @@ import (
 
 	tiktoken "github.com/pkoukk/tiktoken-go"
 
+	"github.com/larsn03/genisys/internal/skills"
 	"github.com/larsn03/genisys/internal/tools"
 	exectool "github.com/larsn03/genisys/internal/tools/exec"
 	"github.com/larsn03/genisys/internal/tools/fileio"
@@ -89,5 +90,26 @@ func TestWorkPersonaBlock(t *testing.T) {
 	}
 	if strings.Contains(out2, "add_assumptions") {
 		t.Error("coder persona unexpectedly carries the work block")
+	}
+}
+
+func TestAvailableSkillsBlock(t *testing.T) {
+	env := PromptEnv{Cwd: "/p", Scratchpad: "/s", ToolsMode: "native"}
+	env.Tools = sixTools().Definitions()
+	if out, _ := RenderSystem(env); strings.Contains(out, "available-skills") {
+		t.Error("empty skills must render no block")
+	}
+	env.Skills = []skills.Skill{
+		{Name: "pdf-forms", Description: "Fill PDF forms.", Path: "/home/u/.genisys/skills/pdf-forms/SKILL.md"},
+		{Name: "skill-management", Description: "Create skills.", Path: "/b/SKILL.md", Builtin: true},
+	}
+	out, err := RenderSystem(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"<available-skills>", "pdf-forms: Fill PDF forms. (/home/u/.genisys/skills/pdf-forms/SKILL.md)", "read_file_lines FIRST"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("skills block missing %q", want)
+		}
 	}
 }

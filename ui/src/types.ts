@@ -96,3 +96,11 @@ export interface CheckpointRow {
   label: string;
   created_at: string;
 }
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  path: string;
+  root: string;
+  builtin: boolean;
+}

@@ -61,6 +61,13 @@ This session is knowledge work: reports, memos, decks, spreadsheets, research.
     <can-write>true</can-write>
   </location>
 </workspace>
+{{- if .Skills }}
+
+<available-skills>
+{{range .Skills}}- {{.Name}}: {{.Description}} ({{.Path}})
+{{end}}</available-skills>
+Only skill summaries above are loaded. When a skill applies or the user requests one, read its SKILL.md with read_file_lines FIRST and follow it exactly.
+{{- end }}
 
 ## Tools
 

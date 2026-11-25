@@ -4,7 +4,7 @@
 
 > **Progress (2026-11-25):** ✅ P0 · ✅ P1 · ✅ **P2 (all: P2-1 … P2-9)** · ✅ SearXNG
 > web search (SPEC §9.5 made normative: remote instance support, JSON-API client,
-> `genisys search test` probe, `web_search` tool — M4 item pulled forward) · ✅ P3a (server) + P3b (three-pane shell w/ resizable+persisted panes, event-reducer UI, step traces + per-step revert, model picker, @-palette, context meter, Monaco editor, git badges, checkpoint history tab, interjection promote/withdraw, interrupt card). ✅ P3c (e2e job, ProjectRail grouping, attachments) · ✅ P4 (embedded CPython-WASI sandbox + paperworks, run_python/load_file_attachment, delivery, previews, work persona).
+> `genisys search test` probe, `web_search` tool — M4 item pulled forward) · ✅ P3a (server) + P3b (three-pane shell w/ resizable+persisted panes, event-reducer UI, step traces + per-step revert, model picker, @-palette, context meter, Monaco editor, git badges, checkpoint history tab, interjection promote/withdraw, interrupt card). ✅ P3c (e2e job, ProjectRail grouping, attachments) · ✅ P4 (embedded CPython-WASI sandbox + paperworks, run_python/load_file_attachment, delivery, previews, work persona) · ✅ P5 (agentic_find sub-agents, web providers + web_extract, skills system + skill-management, MCP progressive disclosure, in-app browser pane).
 > Earlier milestone: durable
 > sessions (sqlite + jsonl transcript + resume), enforced workspace permissions,
 > shadow-git checkpoints with `genisys revert`, mutation tools, CLI permission cards.
@@ -430,6 +430,44 @@ in preview, assumptions section present; zero system-Python dependency on the de
 
 **Exit gate (SPEC M4 AC):** all §4.2 corpus rows pass; skill import from Claude Code works;
 MCP echo callable; web toggle fully disables web tools.
+
+### Delivered (P5)
+
+- **P5-1/2** — `agent/subagent.go` + `templates/locator.tmpl`: fresh-context locator
+  sub-agent with the normative 4-tool set (`search_file_line`, `find_files`, `list_dir`,
+  `read_file_lines`), budgets enforced (≤12 steps, ≤90 s wall, ≤4 KB result),
+  `agent.subagent_model` override, and nested trace events (`parent_step` + `subagent`
+  payload tags). `tools/find`: `agentic_find` runs ≤4 queries concurrently with full
+  failure isolation (panic or error in one query never sinks the batch). Tests:
+  `TestSubagentLocator` (fixture monorepo, citation returned, toolset snapshot = 4),
+  `TestAgenticFindParallelIsolation` (barrier-proven parallelism).
+- **P5-3** — `websearch` refactored behind a `Provider` interface: searxng (default,
+  unchanged semantics) + tavily + brave (token via `web.<p>.api_key_env`, httptest-backed
+  tests); merge/dedupe/24 h cache shared. `web_extract`: fetch (10 s / 5 MB / ≤3 redirects)
+  → readability-lite (`<article>`/`<main>`/text-density pick, nav/footer/script drop,
+  markdown incl. tables + links) → 8 KB/URL, per-URL error isolation, whole payload
+  wrapped in `<web_content trust="untrusted">`. `web.search_enabled: false` or
+  `provider: none` removes both tools from the schema entirely.
+- **P5-4/5** — `internal/skills`: SKILL.md frontmatter parse (Claude-Code fixtures run
+  unmodified), discovery builtin → project → user → `import_from_other_apps` (first name
+  wins), `<available-skills>` prompt block (summaries only, progressive disclosure),
+  explicit `@skill:` chips → prompt `skills[]` → harness instruction line. Built-ins
+  embedded + materialized upgrade-safe: `skill-management` (create/install-from-URL/
+  uninstall) and `documents-presentations-spreadsheets`. REST: `GET /api/skills`,
+  `POST /api/skills/install` (URL or content, validated, 422 on junk),
+  `DELETE /api/skills/{name}` (builtins refuse).
+- **P5-6** — `internal/mcp`: JSON-RPC 2.0 over stdio (newline framing, exec'd command
+  outlives the start ctx) and HTTP (JSON or SSE replies); lazy start on first
+  `get_mcp_info`, 5 min idle recycle, transparent restart. Disclosure trio
+  `get_mcp_info` / `get_mcp_tools_info` / `call_mcp_tool` — MCP schemas never enter the
+  base prompt (snapshot-tested). Permission gating: `readOnlyHint` tools run free,
+  everything else goes through the session broker (`mcp/<server>/<tool>` pseudo-path).
+  Integration: httptest MCP server + stdio echo server built from `testserver/`.
+- **P5-7** — `open_url_in_app_browser` now enforces the allow-list server-side
+  (localhost + `file://` always; others must match `browser.allowed_origins`);
+  `GET /api/browser/origins` feeds the UI. Right panel gains a Browser tab: URL bar,
+  sandboxed iframe, external-open escape hatch, focus-or-open semantics (identical URL
+  refreshes via nonce key; no tab-steal during initial replay).
 
 ---
 
