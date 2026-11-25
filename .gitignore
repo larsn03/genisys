@@ -2,9 +2,9 @@
 /dist/
 *.exe
 
-# Frontend (IMPL §2: ui/ builds into ui/dist, embedded via go:embed)
+# Frontend (IMPL §2: ui/ builds into ui/dist, embedded via go:embed).
+# ui/dist IS committed on purpose: go build must work without node (CI matrix).
 ui/node_modules/
-ui/dist/
 
 # Local state & logs
 *.log

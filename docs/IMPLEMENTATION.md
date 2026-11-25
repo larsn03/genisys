@@ -4,7 +4,7 @@
 
 > **Progress (2026-11-25):** ✅ P0 · ✅ P1 · ✅ **P2 (all: P2-1 … P2-9)** · ✅ SearXNG
 > web search (SPEC §9.5 made normative: remote instance support, JSON-API client,
-> `genisys search test` probe, `web_search` tool — M4 item pulled forward) · ✅ P3a (server: REST + WS + supervisor + serve). 🟡 P3b (frontend).
+> `genisys search test` probe, `web_search` tool — M4 item pulled forward) · ✅ P3a (server) + P3b core (three-pane shell, event-reducer UI, interjection split-send, permission cards, editor pane). 🟡 P3b polish: model picker, @-palette, Monaco, Playwright e2e).
 > Earlier milestone: durable
 > sessions (sqlite + jsonl transcript + resume), enforced workspace permissions,
 > shadow-git checkpoints with `genisys revert`, mutation tools, CLI permission cards.
@@ -346,7 +346,7 @@ into backend (P3a) and frontend (P3b) tracks that proceed in parallel after P3-2
 
 | Task | Description | SPEC | DoD | SP |
 |---|---|---|---|---|
-| P3-8 | `ui/` scaffold: Vite+React+TS+Tailwind+shadcn, Zustand store reducing the event stream, WS client w/ auto-reconnect + `last_event_id` | §20/§21 | event reducer unit tests (vitest) | 2 |
+| P3-8 ✅ | `ui/` scaffold: Vite+React+TS+Tailwind+shadcn, Zustand store reducing the event stream, WS client w/ auto-reconnect + `last_event_id` | §20/§21 | event reducer unit tests (vitest) | 2 |
 | P3-9 | Three-pane shell: ProjectRail, SessionTabs + resizable split panes, right-panel tabstrip, collapsible panes persisted | §5.1/§5.2 | layout matches `docs/images/dark-home-demo-macos.webp` structurally | 2 |
 | P3-10 | MessageStream: user bubbles, streaming assistant, `Worked for …` StepTrace (live tail, expandable chips), action row (copy/fork/retry) | §5.3 | virtualized list survives 10k-message replay | 2 |
 | P3-11 | DiffCard from `file_changed` events (+N −M, expand → Editor diff mode, `↺ Revert step`) | §5.3/§11 | counts match server diff exactly | 1.5 |
