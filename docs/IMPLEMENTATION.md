@@ -2,7 +2,10 @@
 
 **Version:** 0.1 · **Date:** 2026-11-24 · **Companion to:** [`SPEC.md`](SPEC.md) (v0.2)
 
-> **Progress (2026-11-24):** ✅ P0 (all) · ✅ **P1 (all: P1-1 … P1-9)** — headless
+> **Progress (2026-11-25):** ✅ P0 · ✅ P1 · ✅ **P2 (all: P2-1 … P2-9)** — durable
+> sessions (sqlite + jsonl transcript + resume), enforced workspace permissions,
+> shadow-git checkpoints with `genisys revert`, mutation tools, CLI permission cards.
+> Earlier: ✅ **P1 (all)** — headless
 > agent runs end-to-end: `genisys run` REPL with streaming render, native + XML
 > tool-calling, retries, capability probe, 6 tools, interjections (`/steer` `/queue`).
 > See `internal/{model,apiconfig,agent,tools}`, `cmd/genisys`, `.github/workflows/ci.yml`.
@@ -303,15 +306,15 @@ a deliberately fenced-JSON model (recorded golden). `testdata/golden/` populated
 
 | Task | Description | SPEC | DoD | SP |
 |---|---|---|---|---|
-| P2-1 | `internal/store`: sqlite (modernc), WAL, migrations via go:embed, §6.2 schema incl. `events` ledger | §6.2 | migration up/down tests; concurrent-writer test | 2 |
-| P2-2 | `store/transcript.go`: jsonl append (fsync per line) + replay; resume rebuilds message list, re-renders system prompt | §6.3 | kill -9 mid-session → `genisys run --resume` continues from last persisted tool result | 2 |
-| P2-3 | `workspace/grants.go`: path resolution, symlink-escape, grant table (session-scoped, persisted), read/write modes | §10 | table tests incl. `../` and symlink attacks | 2 |
-| P2-4 | `workspace/writer.go`: non-preemptible Mutate critical section, read-before-write hash rule, diff capture, `file_changed` events | §7.2/§7.4 | concurrent interrupt-during-write test: never half-written | 2 |
-| P2-5 | `workspace/checkpoint`: go-git shadow repo per root, pre-mutation commits, ledger rows, revert-step + revert-file, GC (200 commits) | §11 | `genisys revert <step>` restores exactly; user `.git` untouched (test on fixture repo) | 3 |
-| P2-6 | Mutation tools: `edit_file_tool` (unique-match semantics, CRLF normalize, all-or-nothing), `replace_file`, `delete`, `move`, `copy`, `create_folder` — all through `Writer` | §9.2 | property test: random edit sequences ↔ checkpoint replay equivalence | 2 |
-| P2-7 | Permission tools + flow: `request_readonly_access` / `request_read_write_access`; loop suspends on pending (CLI prompt stand-in for WS card); 10-min timeout → deny | §9.7/§10 | interrupt during pending → treated as denied-interrupted (SPEC §7.4) | 1 |
-| P2-8 | Scratchpad: per-session folder lifecycle, attachment staging dir, `get_scratchpad_folder` | §9.6 | temp files never appear in cwd (test) | 0.5 |
-| P2-9 | Loop hardening: persist-every-tool-result invariant, `Stop` injection, orphan status `running→interrupted` on boot, step-budget wrap-up turn | §7.2/§23 | crash-matrix tests (kill at each loop state) | 1.5 |
+| ✅ P2-1 | `internal/store`: modernc sqlite (pure Go), WAL/busy_timeout/FK, embedded migrations w/ up+down, full §6.2 schema incl. `events` ledger; ULID-ish sortable ids | §6.2 | migrate up/down/idempotency test; 16×20 concurrent-writer test | 2 |
+| ✅ P2-2 | `store/transcript.go`: jsonl append w/ fsync per line + tolerant replay; `agent.Resume` rebuilds messages (system prompt re-rendered, never replayed); CLI `--resume [id\|latest]` | §6.3 | simulated kill-9 after tool result → resume continues w/ intact context (test + E2E: "resumed 10 persisted messages") | 2 |
+| ✅ P2-3 | `workspace/grants.go`: canonical resolution (deepest-existing-ancestor realpath), cwd/scratch policy, session grant table persisted via permissions table + reloaded on resume | §10 | table tests: `../` + relative-`../` + symlink-escape + ro→rw escalation + new-file-under-granted-dir | 2 |
+| ✅ P2-4 | `workspace/writer.go`: single mutation path — ctx checked before entry, mutex critical section non-preemptible, read-before-write (sha256+mtime), unified-diff capture, `file_changed`/`checkpoint_created` events, Snapshot/Restore API | §7.2/§7.4 | `TestWriterCriticalSectionNotPreempted`: cancel mid-write → file complete, post-cancel mutate denied | 2 |
+| ✅ P2-5 | `workspace/checkpoint.go`: go-git shadow repo (git-dir outside worktree; storer-init bypasses go-git's .git-pointer write), pre-mutation commits (AllowEmptyCommits), ledger rows, `genisys revert --step/--list`, GC w/ loose-object prune, FileHistory for the Files tab | §11 | revert restores exactly (created files removed); user `.git` byte-identical after checkpoint+revert; GC keeps newest N | 3 |
+| ✅ P2-6 | `tools/mutate`: edit_file_tool (exact-once matches, CRLF→LF normalize, all-or-nothing w/ line-anchored diagnostics), replace_file, delete, move, copy, create_folder — all through `Writer.Mutate` | §9.2 | `TestPropertyEditSequenceReplay`: 12 random edits, every snapshot restores byte-exact prior state | 2 |
+| ✅ P2-7 | `workspace/broker.go` + `tools/perms`: request_readonly/read_write tools, pending row in permissions table, loop suspends (CLI prompt = WS-card stand-in), 10-min timeout → "user did not respond", interrupt → "interrupted", grants persisted + reloaded on resume; shell deny-list (sudo, rm -rf /, pipe-to-sh) raises a card | §9.7/§10 | broker tests incl. interrupt-during-pending; E2E: read outside cwd denied → request → `y` → read succeeds | 1 |
+| ✅ P2-8 | per-session scratchpad `~/.genisys/scratchpad/<session-id>/` (rw always, outside workspace), `get_scratchpad_folder` tool | §9.6 | scratchpad is a separate granted root; E2E: nothing lands in cwd | 0.5 |
+| ✅ P2-9 | every message persists the moment it lands (transcript fsync + messages table, per-call in tool batches); boot: orphan sessions → error, pending permissions → denied; torn-tail transcript line skipped on replay; Session mutex (UI reads while loop writes) | §7.2/§23 | torn-tail resume test + kill-after-tool-result resume test; race suite green | 1.5 |
 
 **Exit gate (SPEC M1 AC):** every mutation reversible by `genisys revert <step>`; kill -9
 mid-session resumes cleanly; grants enforced even when the model hallucinates absolute

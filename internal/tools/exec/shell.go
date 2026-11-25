@@ -9,11 +9,16 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"time"
 
 	"github.com/larsn03/genisys/internal/tools"
+	"github.com/larsn03/genisys/internal/workspace"
 )
+
+// dangerousRe: rm -rf / (and variants), sudo, pipe-to-shell (SPEC §9.3).
+var dangerousRe = regexp.MustCompile(`(^|\s)sudo\s|rm\s+-[a-zA-Z]*[rRf]+[^|;]*\s/(\s|$|")|\|\s*(ba|z|da)?sh(\s|$)`)
 
 type Shell struct{}
 
@@ -54,6 +59,15 @@ func (Shell) Execute(ctx context.Context, raw json.RawMessage, w *tools.World) t
 		timeout = hardTimeoutMs
 	}
 
+	// SPEC §9.3/§10.2: deny-list heuristics raise a permission card before
+	// the command runs (cwd-pinned execution + OS sandbox are the rest).
+	if w.Perms != nil && dangerousRe.MatchString(a.Command) {
+		if err := w.Perms.Request(ctx, w.Cwd, workspace.ModeRW,
+			"shell command needs elevated permission: "+a.Command); err != nil {
+			return tools.Result{Content: "error: " + err.Error(), IsError: true}
+		}
+	}
+
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Millisecond)
 	defer cancel()
 
@@ -61,7 +75,11 @@ func (Shell) Execute(ctx context.Context, raw json.RawMessage, w *tools.World) t
 	cmd := exec.CommandContext(runCtx, name, args...)
 	cmd.Dir = w.Cwd
 	if a.Workdir != nil && *a.Workdir != "" {
-		cmd.Dir = tools.Resolve(w.Cwd, *a.Workdir)
+		d, err := w.Access(*a.Workdir, false)
+		if err != nil {
+			return tools.Result{Content: "error: " + err.Error(), IsError: true}
+		}
+		cmd.Dir = d
 	}
 	killGroup := setupProc(cmd)
 	cmd.Cancel = func() error { return killGroup(cmd) }

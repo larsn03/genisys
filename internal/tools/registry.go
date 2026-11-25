@@ -12,15 +12,39 @@ import (
 
 	"github.com/larsn03/genisys/internal/agent/events"
 	"github.com/larsn03/genisys/internal/model"
+	"github.com/larsn03/genisys/internal/workspace"
 )
 
-// World is everything a tool may touch (IMPL §4). P1 scope: cwd, scratchpad,
-// shell timeout, event sink. Grants/checkpoints arrive in P2.
+// World is everything a tool may touch (IMPL §4).
 type World struct {
 	Cwd          string
 	Scratchpad   string
 	ShellTimeout int // ms, from config agent.shell_timeout_ms
 	Emit         events.Sink
+	StepID       string
+	Writer       *workspace.Writer // nil = P1 behavior (no grants/checkpoints)
+	Perms        *workspace.Broker // nil = no permission UI
+}
+
+// Access resolves a tool path and enforces the grant table (SPEC §10.2).
+// With no Writer wired it degrades to plain resolution (tests, P1 mode).
+func (w *World) Access(path string, write bool) (string, error) {
+	p := expandTilde(path)
+	if w.Writer != nil {
+		r, err := w.Writer.Grants().Check("", p, write)
+		if err != nil {
+			return "", err
+		}
+		return r.Path, nil
+	}
+	return Resolve(w.Cwd, p), nil
+}
+
+// MarkRead witnesses a file read for the read-before-write rule.
+func (w *World) MarkRead(canonicalPath string) {
+	if w.Writer != nil {
+		w.Writer.MarkRead(canonicalPath)
+	}
 }
 
 func (w *World) sink() events.Sink {

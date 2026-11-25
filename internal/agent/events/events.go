@@ -15,6 +15,11 @@ const (
 	SessionStatus         = "session_status"
 	InterruptStarted      = "interrupt_started"
 	InterjectionDelivered = "interjection_delivered"
+	FileChanged           = "file_changed"
+	CheckpointCreated     = "checkpoint_created"
+	CheckpointReverted    = "checkpoint_reverted"
+	PermissionRequested   = "permission_requested"
+	PermissionResolved    = "permission_resolved"
 )
 
 // Event is one spine record.

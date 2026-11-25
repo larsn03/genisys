@@ -34,8 +34,10 @@ func run(args []string) error {
 		return configCmd(args[1:])
 	case "run":
 		return runCmd(args[1:])
-	case "serve", "revert":
-		return fmt.Errorf("%s is not implemented yet (see docs/IMPLEMENTATION.md)", args[0])
+	case "revert":
+		return revertCmd(args[1:])
+	case "serve":
+		return fmt.Errorf("serve is not implemented yet (see docs/IMPLEMENTATION.md)")
 	case "help", "-h", "--help":
 		return usage()
 	default:
@@ -49,9 +51,10 @@ func usage() error {
 usage:
   genisys config validate [--config <path>]   lint all YAML levels (file:line)
   genisys config show     [--config <path>]   print effective app config
-  genisys run [--config <path>] [--model ep/id] [--cwd dir]   interactive agent REPL
+  genisys run [--config <path>] [--model ep/id] [--cwd dir] [--resume [id]]   agent REPL
+  genisys revert [--list] [--step <id>] [--session <id>]   roll back a step's files
   genisys version
-  genisys serve|revert                    (upcoming milestones)
+  genisys serve               (upcoming milestone)
 `)
 	return nil
 }

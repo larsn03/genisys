@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,27 +11,40 @@ import (
 	"github.com/larsn03/genisys/internal/agent/events"
 	"github.com/larsn03/genisys/internal/agent/parser"
 	"github.com/larsn03/genisys/internal/model"
+	"github.com/larsn03/genisys/internal/store"
 	"github.com/larsn03/genisys/internal/tools"
+	"github.com/larsn03/genisys/internal/workspace"
 )
 
 // Deps wires a session (constructor injection happens in cmd/, IMPL §2).
 type Deps struct {
-	Client     *model.Client
-	Model      string
-	Tools      *tools.Registry
-	ToolsMode  string // native | xml | none (SPEC §13.2 profile)
-	MaxSteps   int    // default 64 (SPEC §7.1)
-	Cwd        string
-	Scratchpad string
-	Events     events.Sink
-	Interj     *Interjector
-	Retry      *model.RetryPolicy
+	Client       *model.Client
+	Model        string
+	Tools        *tools.Registry
+	ToolsMode    string // native | xml | none (SPEC §13.2 profile)
+	MaxSteps     int    // default 64 (SPEC §7.1)
+	Cwd          string
+	Scratchpad   string
+	Events       events.Sink
+	Interj       *Interjector
+	Retry        *model.RetryPolicy
+	Writer       *workspace.Writer
+	Perms        *workspace.Broker
+	ShellTimeout int // ms; default 10000
+
+	// P2 persistence (optional; nil = in-memory only).
+	SessionID  string
+	Transcript *store.Transcript
+	DB         *store.DB
+	ProjectID  string
 }
 
 // Session is one agent task thread (SPEC §7). P1 keeps the transcript in
 // memory; P2 adds jsonl persistence + resume.
 type Session struct {
-	d        Deps
+	d  Deps
+	mu sync.Mutex // guards messages (tool goroutines append concurrently;
+	// the UI may read while the loop runs)
 	messages []model.Message
 	steps    int
 	lastSig  string
@@ -51,6 +65,9 @@ func NewSession(d Deps) *Session {
 	if d.ToolsMode == "" {
 		d.ToolsMode = "native"
 	}
+	if d.ShellTimeout <= 0 {
+		d.ShellTimeout = 10000
+	}
 	return &Session{d: d}
 }
 
@@ -60,14 +77,56 @@ func (s *Session) Interjections() *Interjector { return s.d.Interj }
 // Messages returns a copy of the conversation (without the system prompt,
 // which is re-rendered per request — SPEC §8).
 func (s *Session) Messages() []model.Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return append([]model.Message(nil), s.messages...)
 }
+
+// requestMessages snapshots the transcript for one model call.
+func (s *Session) requestMessages() []model.Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]model.Message(nil), s.messages...)
+}
+
+// appendMsg commits a message to memory + transcript + DB (SPEC §7.2:
+// never lose progress — every message persists the moment it lands).
+func (s *Session) appendMsg(stepID string, m model.Message) {
+	s.mu.Lock()
+	s.messages = append(s.messages, m)
+	s.mu.Unlock()
+	if t := s.d.Transcript; t != nil {
+		_ = t.Append(store.KindMessage, stepID, m)
+	}
+	if db := s.d.DB; db != nil && s.d.SessionID != "" {
+		if b, err := json.Marshal(m); err == nil {
+			_, _ = db.AppendMessage(s.d.SessionID, m.Role, b, stepID)
+		}
+	}
+}
+
+// Persisted reports whether the session has durable persistence wired.
+func (s *Session) Persisted() bool { return s.d.Transcript != nil }
 
 // Run appends a user turn and drives the loop until a text-only answer,
 // the step budget, or ctx cancellation.
 func (s *Session) Run(ctx context.Context, userText string) (string, error) {
-	s.messages = append(s.messages, model.Message{Role: "user", Content: userText})
-	return s.loop(ctx)
+	s.appendMsg("", model.Message{Role: "user", Content: userText})
+	if s.d.DB != nil && s.d.SessionID != "" {
+		_ = s.d.DB.SetSessionStatus(s.d.SessionID, store.StatusRunning)
+	}
+	out, err := s.loop(ctx)
+	if s.d.DB != nil && s.d.SessionID != "" {
+		st := store.StatusIdle
+		switch {
+		case err != nil && ctx.Err() == nil:
+			st = store.StatusError
+		case err == nil:
+			st = store.StatusDone
+		}
+		_ = s.d.DB.SetSessionStatus(s.d.SessionID, st)
+	}
+	return out, err
 }
 
 func (s *Session) emit(t string, payload any) {
@@ -89,6 +148,9 @@ func (s *Session) loop(ctx context.Context) (string, error) {
 		}
 		s.steps++
 		stepID := fmt.Sprintf("step_%d", s.steps)
+		if t := s.d.Transcript; t != nil {
+			_ = t.Append(store.KindStepStart, stepID, map[string]string{"model": s.d.Model})
+		}
 		s.emit(events.StepStarted, map[string]any{"step": stepID, "model": s.d.Model})
 
 		// One cancellable step = model call + tool execution (SPEC §7.4:
@@ -122,7 +184,7 @@ func (s *Session) loop(ctx context.Context) (string, error) {
 		if sig := signature(calls); sig == s.lastSig {
 			s.repeats++
 			if s.repeats >= 2 {
-				s.messages = append(s.messages, model.Message{Role: "user",
+				s.appendMsg("", model.Message{Role: "user",
 					Content: "[harness] You have repeated the same tool call three times. Change strategy or explain the obstacle."})
 				s.repeats, s.lastSig = 0, ""
 			}
@@ -138,7 +200,7 @@ func (s *Session) loop(ctx context.Context) (string, error) {
 
 func (s *Session) inject(ijs []Interjection, boundary string) {
 	for _, ij := range ijs {
-		s.messages = append(s.messages, model.Message{Role: "user", Content: InterjectionPrefix + ij.Text})
+		s.appendMsg("", model.Message{Role: "user", Content: InterjectionPrefix + ij.Text})
 		s.emit(events.InterjectionDelivered, map[string]any{"id": ij.ID, "boundary": boundary})
 	}
 }
@@ -156,7 +218,7 @@ func (s *Session) oneStep(stepCtx context.Context, stepID string) (string, []mod
 	}
 	req := model.ChatRequest{
 		Model:    s.d.Model,
-		Messages: append([]model.Message{{Role: "system", Content: sysPrompt}}, s.messages...),
+		Messages: append([]model.Message{{Role: "system", Content: sysPrompt}}, s.requestMessages()...),
 	}
 	if s.d.ToolsMode == "native" {
 		req.Tools = s.d.Tools.Definitions()
@@ -165,6 +227,9 @@ func (s *Session) oneStep(stepCtx context.Context, stepID string) (string, []mod
 
 	comp, err := s.d.Client.CompleteWith(stepCtx, req, s.d.Retry)
 	if comp != nil && comp.Usage.TotalTokens > 0 {
+		if t := s.d.Transcript; t != nil {
+			_ = t.Append(store.KindUsage, stepID, comp.Usage)
+		}
 		s.emit(events.Usage, comp.Usage)
 	}
 
@@ -172,9 +237,9 @@ func (s *Session) oneStep(stepCtx context.Context, stepID string) (string, []mod
 		if stepCtx.Err() != nil {
 			// SPEC §7.4: commit the partial, close pending calls honestly.
 			if comp != nil && (comp.Text != "" || len(comp.ToolCalls) > 0) {
-				s.messages = append(s.messages, assistantMessage(comp.Text, comp.ToolCalls))
+				s.appendMsg(stepID, assistantMessage(comp.Text, comp.ToolCalls))
 				for _, tc := range comp.ToolCalls {
-					s.messages = append(s.messages, model.Message{
+					s.appendMsg(stepID, model.Message{
 						Role: "tool", ToolCallID: tc.ID, Content: InterruptedResult})
 				}
 			}
@@ -184,7 +249,7 @@ func (s *Session) oneStep(stepCtx context.Context, stepID string) (string, []mod
 	}
 
 	prose, calls := s.parse(comp)
-	s.messages = append(s.messages, assistantMessage(prose, calls))
+	s.appendMsg(stepID, assistantMessage(prose, calls))
 	if prose != "" {
 		s.emit(events.TextDelta, map[string]any{"step": stepID, "text": prose})
 	}
@@ -193,7 +258,7 @@ func (s *Session) oneStep(stepCtx context.Context, stepID string) (string, []mod
 	// calls as interrupted instead of executing them (SPEC §7.4).
 	if len(calls) > 0 && (stepCtx.Err() != nil || s.hasPendingInterrupts()) {
 		for _, tc := range calls {
-			s.messages = append(s.messages, model.Message{
+			s.appendMsg(stepID, model.Message{
 				Role: "tool", ToolCallID: tc.ID, Content: InterruptedResult})
 		}
 		return "", nil, nil
@@ -225,9 +290,14 @@ func (s *Session) runTools(ctx context.Context, stepID string, calls []model.Too
 			defer wg.Done()
 			s.emit(events.ToolStarted, map[string]any{"step": stepID, "call_id": calls[i].ID, "tool": calls[i].Function.Name, "args": firstLineOf(calls[i].Function.Arguments, 100)})
 			res := s.d.Tools.Execute(ctx, calls[i], &tools.World{
-				Cwd: s.d.Cwd, Scratchpad: s.d.Scratchpad, ShellTimeout: 10000, Emit: s.d.Events,
+				Cwd: s.d.Cwd, Scratchpad: s.d.Scratchpad, ShellTimeout: s.d.ShellTimeout,
+				Emit: s.d.Events, StepID: stepID, Writer: s.d.Writer, Perms: s.d.Perms,
 			})
 			results[i] = res
+			// SPEC §7.2: persist the moment it lands (order among a
+			// batch is not significant; the memory slice keeps call order).
+			s.appendMsg(stepID, model.Message{
+				Role: "tool", ToolCallID: calls[i].ID, Content: res.Content})
 			s.emit(events.ToolFinished, map[string]any{
 				"step": stepID, "call_id": calls[i].ID, "ok": !res.IsError,
 				"summary": firstLineOf(res.Content, 160),
@@ -235,16 +305,13 @@ func (s *Session) runTools(ctx context.Context, stepID string, calls []model.Too
 		}(i)
 	}
 	wg.Wait()
-	for i, tc := range calls {
-		s.messages = append(s.messages, model.Message{
-			Role: "tool", ToolCallID: tc.ID, Content: results[i].Content})
-	}
+	_ = results // persisted per-call above
 }
 
 // wrapUp is the forced final turn when the step budget is exhausted
 // (SPEC §7.2).
 func (s *Session) wrapUp(ctx context.Context) (string, error) {
-	s.messages = append(s.messages, model.Message{Role: "user",
+	s.appendMsg("", model.Message{Role: "user",
 		Content: "[harness] Step budget exhausted. Summarize the current state: what is done, what remains, and any blocker. Do not call tools."})
 	sysPrompt, err := RenderSystem(PromptEnv{
 		Cwd: s.d.Cwd, Scratchpad: s.d.Scratchpad,
@@ -255,13 +322,13 @@ func (s *Session) wrapUp(ctx context.Context) (string, error) {
 	}
 	comp, err := s.d.Client.CompleteWith(ctx, model.ChatRequest{
 		Model:    s.d.Model,
-		Messages: append([]model.Message{{Role: "system", Content: sysPrompt}}, s.messages...),
+		Messages: append([]model.Message{{Role: "system", Content: sysPrompt}}, s.requestMessages()...),
 	}, s.d.Retry)
 	if err != nil {
 		return "", err
 	}
 	prose, _ := s.parse(comp)
-	s.messages = append(s.messages, model.Message{Role: "assistant", Content: prose})
+	s.appendMsg("wrap_up", model.Message{Role: "assistant", Content: prose})
 	return prose, nil
 }
 

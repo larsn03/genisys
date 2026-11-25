@@ -49,13 +49,18 @@ func (ReadLines) Execute(_ context.Context, raw json.RawMessage, w *tools.World)
 	if a.LinesToRead != nil && *a.LinesToRead > 0 {
 		count = *a.LinesToRead
 	}
-	data, err := os.ReadFile(tools.Resolve(w.Cwd, a.Path))
+	p, err := w.Access(a.Path, false)
+	if err != nil {
+		return tools.Result{Content: "error: " + err.Error(), IsError: true}
+	}
+	data, err := os.ReadFile(p)
 	if err != nil {
 		return tools.Result{Content: "error: " + err.Error(), IsError: true}
 	}
 	if !utf8.Valid(data) {
 		return tools.Result{Content: "error: file is not valid UTF-8 text", IsError: true}
 	}
+	w.MarkRead(p)
 	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 	if start > len(lines) {
 		return tools.Result{Content: fmt.Sprintf("<EOF> (file has %d lines)", len(lines))}
@@ -115,10 +120,15 @@ func (ReadChars) Execute(_ context.Context, raw json.RawMessage, w *tools.World)
 	if a.CharsToRead != nil && *a.CharsToRead > 0 {
 		count = *a.CharsToRead
 	}
-	data, err := os.ReadFile(tools.Resolve(w.Cwd, a.Path))
+	p, err := w.Access(a.Path, false)
 	if err != nil {
 		return tools.Result{Content: "error: " + err.Error(), IsError: true}
 	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return tools.Result{Content: "error: " + err.Error(), IsError: true}
+	}
+	w.MarkRead(p)
 	r := []rune(string(data))
 	if start >= len(r) {
 		return tools.Result{Content: "<EOF> (file has " + fmt.Sprint(len(r)) + " characters)"}
@@ -156,7 +166,11 @@ func (ListDir) Execute(_ context.Context, raw json.RawMessage, w *tools.World) t
 	}
 	dir := w.Cwd
 	if a.Path != "" {
-		dir = tools.Resolve(w.Cwd, a.Path)
+		d, err := w.Access(a.Path, false)
+		if err != nil {
+			return tools.Result{Content: "error: " + err.Error(), IsError: true}
+		}
+		dir = d
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {

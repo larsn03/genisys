@@ -40,6 +40,31 @@ type Message struct {
 	ToolCallID string        `json:"tool_call_id,omitempty"`
 }
 
+// UnmarshalJSON accepts content as a plain string or a parts array
+// (required for transcript replay and request echo-back).
+func (m *Message) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Role       string          `json:"role"`
+		Content    json.RawMessage `json:"content"`
+		Name       string          `json:"name,omitempty"`
+		ToolCalls  []ToolCall      `json:"tool_calls,omitempty"`
+		ToolCallID string          `json:"tool_call_id,omitempty"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	m.Role, m.Name, m.ToolCalls, m.ToolCallID = raw.Role, raw.Name, raw.ToolCalls, raw.ToolCallID
+	if len(raw.Content) == 0 {
+		return nil
+	}
+	var str string
+	if err := json.Unmarshal(raw.Content, &str); err == nil {
+		m.Content = str
+		return nil
+	}
+	return json.Unmarshal(raw.Content, &m.Parts)
+}
+
 // ContentPart is one multimodal content block.
 type ContentPart struct {
 	Type     string        `json:"type"`
