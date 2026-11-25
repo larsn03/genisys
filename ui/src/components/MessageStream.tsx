@@ -68,6 +68,8 @@ function ItemView({ item }: { item: Item }) {
     case "assistant":
       return <AssistantBubble item={item} />;
     case "step":
+      // pure-text steps have no chips to show — skip the trace chrome
+      if (!item.tools.length && !item.files.length) return null;
       return <StepTrace item={item} />;
     case "permission":
       return <PermissionCard item={item} />;

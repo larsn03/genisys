@@ -6,6 +6,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -63,6 +64,12 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		for _, e := range evs {
 			lastEvent = e.ID
 			f := WSEvent{Type: e.Type, ID: e.ID, Session: sessionID, Step: e.StepID}
+			if e.PayloadJSON != "" && e.PayloadJSON != "null" {
+				var pl map[string]any
+				if json.Unmarshal([]byte(e.PayloadJSON), &pl) == nil {
+					f.Payload = pl
+				}
+			}
 			writeEvent(conn, f)
 		}
 	}

@@ -7,6 +7,7 @@ package supervisor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -54,7 +55,10 @@ func (h *Hub) Publish(typ, stepID string, payload any) int64 {
 	}
 	p, _ := payload.(map[string]any)
 	if p == nil && payload != nil {
-		p = map[string]any{"value": payload}
+		// struct payloads (model.Usage…) → their JSON object form
+		if b, err := json.Marshal(payload); err == nil {
+			_ = json.Unmarshal(b, &p)
+		}
 	}
 	e := Entry{ID: id, Session: h.sess, StepID: stepID, Type: typ, Payload: p}
 	h.mu.Lock()

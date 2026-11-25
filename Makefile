@@ -11,6 +11,10 @@ all: build
 ui: ## build the web UI (requires node)
 	cd ui && npm install --no-audit --no-fund && npm run build
 
+e2e: ## browser e2e against serve + mock endpoint (needs node + chromium)
+	CGO_ENABLED=0 go build -o dist/genisys ./cmd/genisys
+	node e2e/run.mjs
+
 build:
 	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/genisys
 

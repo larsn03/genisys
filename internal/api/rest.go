@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/go-git/go-git/v5"
 
+	"github.com/larsn03/genisys/internal/agent"
 	"github.com/larsn03/genisys/internal/apiconfig"
 	"github.com/larsn03/genisys/internal/app"
 	"github.com/larsn03/genisys/internal/store"
@@ -64,6 +66,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/sessions/{id}/file", s.getFile)
 	m.HandleFunc("PUT /api/sessions/{id}/file", s.putFile)
 
+	m.HandleFunc("POST /api/sessions/{id}/upload", s.upload)
 	m.HandleFunc("GET /ws", s.ws)
 	m.HandleFunc("GET /", s.serveUI)
 }
@@ -123,6 +126,9 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
+	}
+	if rows == nil {
+		rows = []*store.Project{} // JSON [] not null
 	}
 	writeJSON(w, 200, rows)
 }
@@ -282,6 +288,9 @@ func (s *Server) sessionMessages(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	if msgs == nil {
+		msgs = []store.MessageRow{}
+	}
 	writeJSON(w, 200, msgs)
 }
 
@@ -295,6 +304,9 @@ func (s *Server) sessionEvents(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
+	}
+	if evs == nil {
+		evs = []store.EventRow{}
 	}
 	writeJSON(w, 200, evs)
 }
@@ -357,7 +369,11 @@ func (s *Server) listInterjections(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, wk.Interjections().Pending())
+	pending := wk.Interjections().Pending()
+	if pending == nil {
+		pending = []agent.Interjection{}
+	}
+	writeJSON(w, 200, pending)
 }
 
 func (s *Server) interjectionOp(w http.ResponseWriter, r *http.Request) {
@@ -433,6 +449,9 @@ func (s *Server) listCheckpoints(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
+	}
+	if cps == nil {
+		cps = []store.CheckpointRow{}
 	}
 	writeJSON(w, 200, cps)
 }
@@ -597,6 +616,55 @@ func (s *Server) putFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
+// upload accepts a multipart file into the session scratchpad
+// (attachments, SPEC §5.3); returns the absolute path the agent can read.
+func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
+	_, wc := s.handle(w, r)
+	if wc == nil {
+		return
+	}
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		writeErr(w, 400, "multipart form with a `file` field required: "+err.Error())
+		return
+	}
+	f, hdr, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	defer f.Close()
+	name := filepath.Base(hdr.Filename) // no traversal
+	if name == "." || name == "/" || name == string(filepath.Separator) {
+		writeErr(w, 400, "bad filename")
+		return
+	}
+	dir := filepath.Join(wc.h.Scratch, "attachments")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	dst := filepath.Join(dir, name)
+	for i := 1; ; i++ { // never clobber: name-2.ext, name-3.ext, …
+		if _, err := os.Stat(dst); os.IsNotExist(err) {
+			break
+		}
+		ext := filepath.Ext(name)
+		dst = filepath.Join(dir, fmt.Sprintf("%s-%d%s", name[:len(name)-len(ext)], i, ext))
+	}
+	out, err := os.Create(dst)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	defer out.Close()
+	n, err := io.Copy(out, io.LimitReader(f, 64<<20))
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 201, map[string]any{"path": dst, "name": filepath.Base(dst), "size": n})
+}
+
 func relPath(cwd, rel string) string {
 	if rel == "" || rel == "." || rel == "/" {
 		return cwd
@@ -616,7 +684,7 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 		Model         string `json:"model"`
 		ContextWindow int    `json:"context_window"`
 	}
-	var out []mi
+	out := []mi{}
 	for _, ep := range s.App.Cfg.Endpoints {
 		for _, m := range ep.Models {
 			out = append(out, mi{

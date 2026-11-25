@@ -3,6 +3,7 @@
 // split-send (Queue + ⚡Interrupt while running, Shift inverts).
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { api } from "../api";
 import { useStore } from "../store";
 
 export function Composer() {
@@ -12,11 +13,36 @@ export function Composer() {
   const send = useStore((s) => s.send);
   const stop = useStore((s) => s.stop);
   const ta = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [pending, setPending] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
 
-  const submit = (mode?: "queue" | "interrupt") => {
+  const submit = async (mode?: "queue" | "interrupt") => {
     const t = text.trim();
-    if (!t || !current) return;
-    send(t, mode ?? (running ? "queue" : undefined));
+    if ((!t && !pending.length) || !current) return;
+    let full = t;
+    if (pending.length && current) {
+      setUploading(true);
+      try {
+        const paths: string[] = [];
+        for (const f of pending) {
+          const res = await api.upload(current, f);
+          paths.push(res.path);
+        }
+        if (paths.length)
+          full =
+            (full ? full + "\n\n" : "") +
+            "[attached files — read them with read_file_lines]\n" +
+            paths.map((p) => "- " + p).join("\n");
+      } catch (e) {
+        useStore.setState({ error: String(e) });
+      } finally {
+        setUploading(false);
+        setPending([]);
+      }
+    }
+    if (!full) return;
+    send(full, mode ?? (running ? "queue" : undefined));
     setText("");
     ta.current?.focus();
   };
@@ -25,6 +51,24 @@ export function Composer() {
     <div className="absolute bottom-0 inset-x-0 px-6 pb-4">
       <div className="max-w-3xl mx-auto relative">
         <Palette text={text} onPick={(name) => setText(pickName(text, name))} taRef={ta} />
+        {pending.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 px-1 pb-1.5">
+            {pending.map((f, i) => (
+              <span
+                key={i}
+                className="flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-lg border border-line bg-panel2 text-mute"
+              >
+                📎 {f.name}
+                <button
+                  onClick={() => setPending(pending.filter((_, j) => j !== i))}
+                  className="text-faint hover:text-err"
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <div className="bg-panel border border-line rounded-2xl shadow-xl shadow-black/30 focus-within:border-accent/50">
           <textarea
             ref={ta}
@@ -45,12 +89,23 @@ export function Composer() {
             <ModelChip />
             <ContextMeter />
             <button
+              onClick={() => fileRef.current?.click()}
               className="text-faint hover:text-mute text-sm px-1"
-              title="Attachments — lands with the document pipeline (P4)"
-              disabled
+              title="Attach a file (goes to the session scratchpad)"
+              disabled={uploading}
             >
-              +
+              {uploading ? "…" : "+"}
             </button>
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                if (e.target.files) setPending([...pending, ...Array.from(e.target.files)]);
+                e.target.value = "";
+              }}
+            />
             {running && (
               <button
                 onClick={() => void stop()}

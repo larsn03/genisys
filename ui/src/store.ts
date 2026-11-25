@@ -26,6 +26,7 @@ const loadLayout = (): PaneState => {
 
 interface State {
   sessions: SessionRow[];
+  projects: { id: string; name: string; kind: string; workspace_path: string }[];
   current: string | null;
   items: Item[];
   showAll: boolean; // windowing escape hatch (long replays)
@@ -48,8 +49,10 @@ interface State {
   error: string | null;
 
   refreshSessions: () => Promise<void>;
+  refreshProjects: () => Promise<void>;
+  createProject: (name: string, path: string) => Promise<void>;
   select: (id: string) => Promise<void>;
-  createSession: () => Promise<void>;
+  createSession: (projectId?: string) => Promise<void>;
   archive: (id: string) => Promise<void>;
   setModel: (ref: string) => Promise<void>;
   loadModels: () => Promise<void>;
@@ -76,6 +79,7 @@ let conn: WSConn | null = null;
 
 export const useStore = create<State>((set, get) => ({
   sessions: [],
+  projects: [],
   current: null,
   items: [],
   showAll: false,
@@ -111,6 +115,23 @@ export const useStore = create<State>((set, get) => ({
       const sessions = await api.sessions();
       set({ sessions });
       if (!get().current && sessions.length) await get().select(sessions[0].id);
+    } catch (e) {
+      set({ error: String(e) });
+    }
+  },
+
+  async refreshProjects() {
+    try {
+      set({ projects: await api.projects() });
+    } catch {
+      set({ projects: [] });
+    }
+  },
+
+  async createProject(name, path) {
+    try {
+      await api.createProject({ name, kind: "code", workspace_path: path, allow_coding: true });
+      await get().refreshProjects();
     } catch (e) {
       set({ error: String(e) });
     }
@@ -158,8 +179,8 @@ export const useStore = create<State>((set, get) => ({
     void get().refreshCheckpoints();
   },
 
-  async createSession() {
-    const s = await api.createSession({ title: "New session" });
+  async createSession(projectId) {
+    const s = await api.createSession({ title: "New session", project_id: projectId ?? "" });
     set({ error: null });
     await get().refreshSessions();
     await get().select(s.id);

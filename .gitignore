@@ -18,3 +18,7 @@ coverage.out
 
 # pi session state
 .pi
+
+ui/test-results/
+ui/playwright-report/
+dist/

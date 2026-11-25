@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -296,6 +297,57 @@ func TestModelsAndGitStatus(t *testing.T) {
 	}
 }
 
+// Attachments: multipart upload lands in the session scratchpad.
+func TestUpload(t *testing.T) {
+	e := newEnv(t, []string{sseText("x")}, 0)
+	sid := e.newSession(t)
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", "notes.txt")
+	fw.Write([]byte("attached!"))
+	mw.Close()
+	req, _ := http.NewRequest("POST", e.hs.URL+"/api/sessions/"+sid+"/upload", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+e.token)
+	resp, err := e.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 201 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("upload = %d: %s", resp.StatusCode, b)
+	}
+	var res struct {
+		Path string `json:"path"`
+		Name string `json:"name"`
+	}
+	json.NewDecoder(resp.Body).Decode(&res)
+	if !strings.HasSuffix(res.Path, filepath.Join("attachments", "notes.txt")) {
+		t.Errorf("path = %s", res.Path)
+	}
+	b, err := os.ReadFile(res.Path)
+	if err != nil || string(b) != "attached!" {
+		t.Errorf("file = %q (%v)", b, err)
+	}
+	// second upload dedupes instead of clobbering
+	req2, _ := http.NewRequest("POST", e.hs.URL+"/api/sessions/"+sid+"/upload", bytes.NewReader(buf.Bytes()))
+	req2.Header.Set("Content-Type", mw.FormDataContentType())
+	req2.Header.Set("Authorization", "Bearer "+e.token)
+	resp2, err := e.client.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	var res2 struct {
+		Path string `json:"path"`
+	}
+	json.NewDecoder(resp2.Body).Decode(&res2)
+	if res2.Path == res.Path {
+		t.Error("second upload clobbered the first")
+	}
+}
+
 // P3-1: prompt → tools → events ledger → messages, all over REST.
 func TestPromptFlow(t *testing.T) {
 	e := newEnv(t, []string{
@@ -522,6 +574,7 @@ func TestWebSocket(t *testing.T) {
 	}
 	defer conn2.Close()
 	var replayed []int64
+	sawPayload := false
 	for {
 		var ev api.WSEvent
 		conn2.SetReadDeadline(time.Now().Add(3 * time.Second))
@@ -529,6 +582,12 @@ func TestWebSocket(t *testing.T) {
 			break // deadline = replay exhausted
 		}
 		replayed = append(replayed, ev.ID)
+		if ev.Type == "text_delta" && fmt.Sprint(ev.Payload["text"]) == "ws done" {
+			sawPayload = true // replayed frames must carry payloads, not just ids
+		}
+	}
+	if !sawPayload {
+		t.Error("replayed text_delta lost its payload")
 	}
 	all := e.events(t, sid, last)
 	if len(replayed) != len(all) {

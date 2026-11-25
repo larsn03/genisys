@@ -18,6 +18,21 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 export const api = {
   sessions: () => req<import("./types").SessionRow[]>("GET", "/api/sessions"),
+  projects: () =>
+    req<{ id: string; name: string; kind: string; workspace_path: string }[]>("GET", "/api/projects"),
+  createProject: (body: Record<string, unknown>) =>
+    req<{ id: string; name: string }>("POST", "/api/projects", body),
+  upload: async (id: string, file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const r = await fetch(`/api/sessions/${id}/upload`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${TOKEN}` }, // FormData sets its own boundary
+      body: fd,
+    });
+    if (!r.ok) throw new Error(`upload → ${r.status}: ${await r.text()}`);
+    return (await r.json()) as { path: string; name: string; size: number };
+  },
   createSession: (body: Record<string, unknown>) =>
     req<import("./types").SessionRow>("POST", "/api/sessions", body),
   patchSession: (id: string, body: Record<string, unknown>) =>

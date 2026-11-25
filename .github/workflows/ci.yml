@@ -50,3 +50,23 @@ jobs:
         with: { go-version-file: go.mod }
       - name: go test -race
         run: go test -race -count=1 ./...
+
+  # e2e-mock (IMPL §14): real browser against `genisys serve` + scripted
+  # OpenAI mock — SPEC M2 exit gate at the UI level.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: ui/package-lock.json }
+      - name: build UI (fresh dist; go:embed)
+        run: cd ui && npm ci && npm run build
+      - name: build server
+        env: { CGO_ENABLED: "0" }
+        run: go build -o dist/genisys ./cmd/genisys
+      - name: install chromium
+        run: cd ui && npx playwright install --with-deps chromium
+      - name: run e2e
+        run: node e2e/run.mjs
