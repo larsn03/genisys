@@ -92,6 +92,8 @@ jobs:
           chmod +x /tmp/at.AppImage
           /tmp/at.AppImage --appimage-extract
           echo "APPIAMETOOL=$GITHUB_WORKSPACE/squashfs-root/usr/bin/appimagetool" >> "$GITHUB_ENV"
+          # bundled desktop-file-validate, mksquashfs, zsyncmake
+          echo "$GITHUB_WORKSPACE/squashfs-root/usr/bin" >> "$GITHUB_PATH"
       - name: dist (tarballs + AppImage)
         run: make dist
       - name: smoke-run the AppImage
