@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -316,6 +317,19 @@ func (w *Worker) Prompt(ctx context.Context, text, mode string) (PromptResult, e
 		w.Hub.Publish(events.SessionStatus, "", map[string]any{"status": store.StatusIdle})
 	}()
 	return Started, nil
+}
+
+// Compact forces context compaction now (SPEC §24 manual action from the
+// error card / settings). Refuses while a turn is in flight.
+func (w *Worker) Compact(ctx context.Context) error {
+	if w.Running() {
+		return fmt.Errorf("supervisor: session is running — stop it before compacting")
+	}
+	h, err := w.ensureHandle()
+	if err != nil {
+		return err
+	}
+	return h.Sess.CompactNow(ctx)
 }
 
 // Stop cancels the running turn.

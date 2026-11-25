@@ -769,3 +769,276 @@ func TestBrowserOrigins(t *testing.T) {
 		t.Errorf("expected empty non-null origins, got %v", out.Origins)
 	}
 }
+
+// --- P6-1: fork / pin / hard delete ------------------------------------------
+
+func TestForkAndDelete(t *testing.T) {
+	e := newEnv(t, []string{
+		sseToolCall("c1", "list_dir", `{"path": ""}`),
+		sseText("first answer"),
+	}, 0)
+	sid := e.newSession(t)
+	e.mustJSON(t, "POST", "/api/sessions/"+sid+"/prompt", map[string]any{"text": "go"}, nil)
+	e.waitIdle(t, sid)
+
+	// fork
+	var fork map[string]any
+	e.mustJSON(t, "POST", "/api/sessions/"+sid+"/fork", map[string]any{}, &fork)
+	fid := fork["id"].(string)
+	if fid == "" || fid == sid {
+		t.Fatalf("fork id = %v", fid)
+	}
+	if fork["forked_from"] != sid {
+		t.Errorf("forked_from = %v", fork["forked_from"])
+	}
+	if !strings.Contains(fork["title"].(string), "fork") {
+		t.Errorf("title = %v", fork["title"])
+	}
+	// fork carries the transcript
+	var msgs []map[string]any
+	e.mustJSON(t, "GET", "/api/sessions/"+fid+"/messages", nil, &msgs)
+	var orig []map[string]any
+	e.mustJSON(t, "GET", "/api/sessions/"+sid+"/messages", nil, &orig)
+	if len(msgs) != len(orig) || len(msgs) == 0 {
+		t.Fatalf("fork messages=%d original=%d", len(msgs), len(orig))
+	}
+	// fork is independent: prompting the fork must not touch the source
+	e2 := []string{sseText("fork answer")}
+	_ = e2
+	e.mustJSON(t, "POST", "/api/sessions/"+fid+"/prompt", map[string]any{"text": "fork turn"}, nil)
+	e.waitIdle(t, fid)
+	var msgs2 []map[string]any
+	e.mustJSON(t, "GET", "/api/sessions/"+sid+"/messages", nil, &msgs2)
+	if len(msgs2) != len(orig) {
+		t.Errorf("source grew after fork: %d → %d", len(orig), len(msgs2))
+	}
+
+	// pin
+	e.mustJSON(t, "PATCH", "/api/sessions/"+sid, map[string]any{"pinned": true}, nil)
+	var got struct {
+		Session struct {
+			Pinned bool `json:"pinned"`
+		} `json:"session"`
+	}
+	e.mustJSON(t, "GET", "/api/sessions/"+sid, nil, &got)
+	if !got.Session.Pinned {
+		t.Error("pin not persisted")
+	}
+
+	// hard delete
+	e.mustJSON(t, "DELETE", "/api/sessions/"+fid+"?hard=1", nil, nil)
+	if code, _ := e.do(t, "GET", "/api/sessions/"+fid, nil); code != 404 {
+		t.Errorf("deleted fork GET → %d want 404", code)
+	}
+}
+
+// --- P6-3: file history + restore --------------------------------------------
+
+func TestFileHistoryRestore(t *testing.T) {
+	e := newEnv(t, []string{
+		sseToolCall("c1", "replace_file", `{"path":"note.txt","content":"version one"}`),
+		sseToolCall("c2", "read_file_lines", `{"path":"note.txt"}`),
+		sseToolCall("c3", "replace_file", `{"path":"note.txt","content":"version two"}`),
+		sseText("done"),
+	}, 0)
+	sid := e.newSession(t)
+	e.mustJSON(t, "POST", "/api/sessions/"+sid+"/prompt", map[string]any{"text": "write twice"}, nil)
+	e.waitIdle(t, sid)
+
+	// history for the file: SPEC §11 snapshots are PRE-mutation, so the
+	// second write's pre-commit captured "version one"
+	var hist []map[string]any
+	e.mustJSON(t, "GET", "/api/sessions/"+sid+"/file-history?path=note.txt", nil, &hist)
+	if len(hist) < 1 {
+		t.Fatalf("snapshots=%d want >=1", len(hist))
+	}
+	oldest := hist[len(hist)-1]["sha"].(string)
+
+	// current content is v2
+	_, body := e.do(t, "GET", "/api/sessions/"+sid+"/file?path=note.txt", nil)
+	if !strings.Contains(string(body), "version two") {
+		t.Fatalf("current=%s", body)
+	}
+	// snapshot at oldest sha is v1
+	code, body := e.do(t, "GET", "/api/sessions/"+sid+"/file-at?path=note.txt&sha="+oldest, nil)
+	if code != 200 || !strings.Contains(string(body), "version one") {
+		t.Fatalf("file-at %d: %s", code, body)
+	}
+
+	// restore to oldest
+	e.mustJSON(t, "POST", "/api/sessions/"+sid+"/restore-file",
+		map[string]any{"path": "note.txt", "sha": oldest}, nil)
+	_, body = e.do(t, "GET", "/api/sessions/"+sid+"/file?path=note.txt", nil)
+	if !strings.Contains(string(body), "version one") {
+		t.Fatalf("after restore=%s", body)
+	}
+
+	// user edit behind our back → 409 without force
+	os.WriteFile(filepath.Join(e.wsdir, "note.txt"), []byte("user typed this"), 0o644)
+	var hist2 []map[string]any
+	e.mustJSON(t, "GET", "/api/sessions/"+sid+"/file-history?path=note.txt", nil, &hist2)
+	code, body = e.do(t, "POST", "/api/sessions/"+sid+"/restore-file",
+		map[string]any{"path": "note.txt", "sha": hist2[0]["sha"].(string)})
+	if code != 409 {
+		t.Fatalf("restore over user edits → %d want 409: %s", code, body)
+	}
+	e.mustJSON(t, "POST", "/api/sessions/"+sid+"/restore-file",
+		map[string]any{"path": "note.txt", "sha": hist2[0]["sha"].(string), "force": true}, nil)
+}
+
+// --- P6-6: genisys_tool over the wire -----------------------------------------
+
+func TestGenisysTool(t *testing.T) {
+	e := newEnv(t, []string{
+		sseToolCall("g1", "genisys_tool", `{"action":"session_info"}`),
+		sseToolCall("g2", "genisys_tool", `{"action":"config_get"}`),
+		sseText("all good"),
+	}, 0)
+	sid := e.newSession(t)
+	e.mustJSON(t, "POST", "/api/sessions/"+sid+"/prompt", map[string]any{"text": "tell me about yourself"}, nil)
+	e.waitIdle(t, sid)
+
+	_, msgs := e.do(t, "GET", "/api/sessions/"+sid+"/messages", nil)
+	body := string(msgs)
+	if !strings.Contains(body, "model_ref") {
+		t.Fatalf("session_info result missing from transcript: %s", body)
+	}
+	if !strings.Contains(body, "agent:") && !strings.Contains(body, "endpoints") {
+		t.Fatalf("config_get result missing: %s", body)
+	}
+	// the tool result must be persisted as a tool message (introspection
+	// survives resume)
+	var ms []map[string]any
+	e.mustJSON(t, "GET", "/api/sessions/"+sid+"/messages", nil, &ms)
+	var toolMsgs int
+	for _, m := range ms {
+		if m["role"] == "tool" {
+			toolMsgs++
+		}
+	}
+	if toolMsgs < 2 {
+		t.Fatalf("tool messages=%d want >=2", toolMsgs)
+	}
+}
+
+// --- P6-4: settings screens ↔ config.yaml -------------------------------------
+
+func TestSettingsRoundTrip(t *testing.T) {
+	e := newEnv(t, []string{sseText("ok")}, 0)
+	seed := `# genisys config
+version: 1
+default_model: mock/m1
+endpoints:
+  - id: mock
+    base_url: http://127.0.0.1:1/v1 # endpoint comment
+    models:
+      - id: m1
+browser:
+  allowed_origins:
+    - http://localhost:3000 # origin comment
+web:
+  provider: searxng
+  searxng:
+    base_url: http://sx.example # instance comment
+`
+	if err := os.WriteFile(e.app.CfgPath, []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.app.ReloadeCfg(); err != nil {
+		t.Fatal(err)
+	}
+
+	var st map[string]any
+	e.mustJSON(t, "GET", "/api/settings", nil, &st)
+	if st["default_model"] != "mock/m1" {
+		t.Fatalf("default_model=%v", st["default_model"])
+	}
+	br := st["browser"].(map[string]any)
+	if o := br["allowed_origins"].([]any); len(o) != 1 || o[0] != "http://localhost:3000" {
+		t.Fatalf("origins=%v", br["allowed_origins"])
+	}
+
+	// scalar PATCH keeps comments
+	e.mustJSON(t, "PATCH", "/api/config", map[string]string{"web.searxng.base_url": "http://sx2.example"}, nil)
+	b, _ := os.ReadFile(e.app.CfgPath)
+	s := string(b)
+	if !strings.Contains(s, "http://sx2.example") || !strings.Contains(s, "# instance comment") {
+		t.Fatalf("comment not preserved:\n%s", s)
+	}
+
+	// list PATCH stays a sequence
+	e.mustJSON(t, "PATCH", "/api/config", map[string]string{"browser.allowed_origins": "https://a.com, https://b.com"}, nil)
+	e.mustJSON(t, "GET", "/api/settings", nil, &st)
+	if o := st["browser"].(map[string]any)["allowed_origins"].([]any); len(o) != 2 {
+		t.Fatalf("origins after patch=%v", o)
+	}
+	b, _ = os.ReadFile(e.app.CfgPath)
+	if !strings.Contains(string(b), "- https://a.com") {
+		t.Fatalf("list not written as sequence:\n%s", b)
+	}
+
+	// PUT validates before writing
+	code, _ := e.do(t, "PUT", "/api/config", map[string]string{"yaml": "version: [broken"})
+	if code != 400 {
+		t.Fatalf("bad yaml → %d", code)
+	}
+	b, _ = os.ReadFile(e.app.CfgPath)
+	if !strings.Contains(string(b), "# genisys config") {
+		t.Fatal("rejected PUT must not touch the file")
+	}
+
+	// web probe answers
+	code, _ = e.do(t, "POST", "/api/web/probe", nil)
+	if code != 200 {
+		t.Fatalf("web probe → %d", code)
+	}
+}
+
+// P6-1 DoD: "fork mid-run branches cleanly".
+func TestForkMidRun(t *testing.T) {
+	e := newEnv(t, []string{sseText("original answer"), sseText("fork answer")}, 300*time.Millisecond)
+	sid := e.newSession(t)
+	e.mustJSON(t, "POST", "/api/sessions/"+sid+"/prompt", map[string]any{"text": "slow one"}, nil)
+
+	// while still running: fork
+	var forked struct {
+		ID string `json:"id"`
+	}
+	e.mustJSON(t, "POST", "/api/sessions/"+sid+"/fork", nil, &forked)
+	if forked.ID == "" || forked.ID == sid {
+		t.Fatalf("fork id %q", forked.ID)
+	}
+	var orig struct {
+		Live bool `json:"live"`
+	}
+	e.mustJSON(t, "GET", "/api/sessions/"+sid, nil, &orig)
+	if !orig.Live {
+		t.Fatal("original should still be live")
+	}
+
+	e.waitIdle(t, sid)
+
+	// fork carries the user turn but not the in-flight answer
+	var msgs []map[string]any
+	e.mustJSON(t, "GET", "/api/sessions/"+forked.ID+"/messages", nil, &msgs)
+	var userTurns, answers int
+	for _, m := range msgs {
+		switch m["role"] {
+		case "user":
+			userTurns++
+		case "assistant":
+			answers++
+		}
+	}
+	if userTurns != 1 {
+		t.Fatalf("fork user turns=%d want 1", userTurns)
+	}
+	if answers != 0 {
+		t.Fatalf("fork must not carry the in-flight answer, got %d", answers)
+	}
+
+	// both sessions run independently afterwards
+	e.mustJSON(t, "POST", "/api/sessions/"+forked.ID+"/prompt", map[string]any{"text": "fork branch"}, nil)
+	e.waitIdle(t, forked.ID)
+	e.mustJSON(t, "GET", "/api/sessions/"+sid+"/messages", nil, &msgs)
+}

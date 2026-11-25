@@ -82,6 +82,64 @@ func Set(doc *yaml.Node, keys []string, value string) error {
 	return nil
 }
 
+// SetList writes a string sequence at the key path (browser.allowed_origins
+// style values). Comments elsewhere in the document are preserved.
+func SetList(doc *yaml.Node, keys []string, values []string) error {
+	if len(keys) == 0 {
+		return fmt.Errorf("apiconfig.SetList: empty key path")
+	}
+	m := rootMap(doc)
+	parent := m
+	for i, k := range keys {
+		child := mapValue(parent, k)
+		isLast := i == len(keys)-1
+		if child == nil {
+			got := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+			if !isLast {
+				got = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			}
+			parent.Content = append(parent.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: k, Tag: "!!str"}, got)
+			parent = got
+			continue
+		}
+		if isLast {
+			seq := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+			for _, v := range values {
+				seq.Content = append(seq.Content,
+					&yaml.Node{Kind: yaml.ScalarNode, Value: v, Tag: resolveTag(v)})
+			}
+			*child = *seq
+			return nil
+		}
+		if child.Kind != yaml.MappingNode {
+			return fmt.Errorf("key %q is not a mapping", k)
+		}
+		parent = child
+	}
+	return nil
+}
+
+// GetNode walks the key path and returns the raw node (PATCH uses it to
+// decide scalar vs sequence writes).
+func GetNode(doc *yaml.Node, keys []string) (*yaml.Node, bool) {
+	m := rootMap(doc)
+	var child *yaml.Node
+	for i, k := range keys {
+		child = mapValue(m, k)
+		if child == nil {
+			return nil, false
+		}
+		if i < len(keys)-1 {
+			if child.Kind != yaml.MappingNode {
+				return nil, false
+			}
+			m = child
+		}
+	}
+	return child, child != nil
+}
+
 // Get returns the scalar string at the key path, if present.
 func Get(doc *yaml.Node, keys []string) (string, bool) {
 	m := rootMap(doc)

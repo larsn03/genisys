@@ -4,7 +4,7 @@
 
 > **Progress (2026-11-25):** ✅ P0 · ✅ P1 · ✅ **P2 (all: P2-1 … P2-9)** · ✅ SearXNG
 > web search (SPEC §9.5 made normative: remote instance support, JSON-API client,
-> `genisys search test` probe, `web_search` tool — M4 item pulled forward) · ✅ P3a (server) + P3b (three-pane shell w/ resizable+persisted panes, event-reducer UI, step traces + per-step revert, model picker, @-palette, context meter, Monaco editor, git badges, checkpoint history tab, interjection promote/withdraw, interrupt card). ✅ P3c (e2e job, ProjectRail grouping, attachments) · ✅ P4 (embedded CPython-WASI sandbox + paperworks, run_python/load_file_attachment, delivery, previews, work persona) · ✅ P5 (agentic_find sub-agents, web providers + web_extract, skills system + skill-management, MCP progressive disclosure, in-app browser pane).
+> `genisys search test` probe, `web_search` tool — M4 item pulled forward) · ✅ P3a (server) + P3b (three-pane shell w/ resizable+persisted panes, event-reducer UI, step traces + per-step revert, model picker, @-palette, context meter, Monaco editor, git badges, checkpoint history tab, interjection promote/withdraw, interrupt card). ✅ P3c (e2e job, ProjectRail grouping, attachments) · ✅ P4 (embedded CPython-WASI sandbox + paperworks, run_python/load_file_attachment, delivery, previews, work persona) · ✅ P5 (agentic_find sub-agents, web providers + web_extract, skills system + skill-management, MCP progressive disclosure, in-app browser pane) · ✅ **P6 (all: P6-1 … P6-7)** — context compaction, fork/pin/delete + badges, file-history restore, full settings screens + themes + onboarding, error cards, genisys_tool + introspection/file-history skills, Linux AppImage distribution.
 > Earlier milestone: durable
 > sessions (sqlite + jsonl transcript + resume), enforced workspace permissions,
 > shadow-git checkpoints with `genisys revert`, mutation tools, CLI permission cards.
@@ -471,17 +471,32 @@ MCP echo callable; web toggle fully disables web tools.
 
 ---
 
-## 11. Phase 6 — Polish (P6 ⇒ SPEC M5) — 13 SP
+## 11. Phase 6 — Polish (P6 ⇒ SPEC M5) — 13 SP · ✅ complete (2026-11-25)
+
+> **Shipped:** session fork (mid-run safe) / pin / rename / archive / hard
+> delete + unread badges · result aging + 80% compaction with structured
+> summary, `context_compacted` markers, overflow auto-compact-retry, manual
+> `POST /compact` · file-history timeline + per-file restore with
+> user-edit 409 guard · settings screens (Models + Test connection, Agent,
+> Web + probe, Browser allow-list, Skills manager, MCP, raw-YAML editor) —
+> every write round-trips config.yaml with comments intact · light/dark/
+> system themes · error cards (Retry / Switch model / Edit last message /
+> Compact now) · first-run onboarding wizard · `genisys_tool` (18 actions)
+> + `introspection` & `file-history` built-in skills · AppImage pipeline
+> (`make dist` → `Genisys-<ver>-x86_64.appimage`, CI package + release
+> jobs, smoke-run gate) + 4-OS tarballs + version stamping + README.
+> Remaining for M5 exit gate: full acceptance-corpus soak on the live
+> endpoint (tracked separately).
 
 | Task | Description | SPEC | DoD | SP |
 |---|---|---|---|---|
-| P6-1 | Fork sessions (branch transcript), pin/rename/archive/delete flows, background completion badges | §5.2/§5.3 | fork mid-run branches cleanly | 2 |
-| P6-2 | Context management: result aging, compaction at 80% (structured summary, "Context compacted" marker), overflow auto-compact-retry | §24/§23 | long-session soak: no overflow hard-fail; compaction marker visible | 3 |
-| P6-3 | Checkpoint browser UI (file history timeline, restore), user-edit-overwrite warning | §11/§5.4 | restore any file to any step | 2 |
-| P6-4 | Settings UI complete: Endpoints CRUD + Test connection, Skills manager, Browser allow-list, theme light/dark/system (both palettes per `docs/images/`) | §5.5/§18 | every settings screen round-trips YAML (comment-preservation e2e) | 2.5 |
-| P6-5 | Error cards everywhere: Retry / Switch model / Edit last message; parse-failure nudges visible | §23 | endpoint kill/restore mid-session recovers | 1.5 |
-| P6-6 | `genisys_tool` + `introspection`/`file-history` built-in skills | §9.8/§14 | agent can summarize its own session | 1 |
-| P6-7 | Distribution: **Linux AppImage (SPEC §19.1/G13, primary artifact)** via `make dist` (appimagetool: binary + .desktop + icon) + 4 OS/arch tarballs, version stamping, `genisys version`; README install docs. macOS/Windows releases planned for the future — cross-compile stays green, packaging deferred | G12, G13 | AppImage runs on clean Ubuntu LTS VM (`chmod +x`, no other installs); CI artifacts downloadable; cold start on clean Linux VM < 2 min incl. config | 1 |
+| ✅ P6-1 | Fork sessions (branch transcript), pin/rename/archive/delete flows, background completion badges | §5.2/§5.3 | fork mid-run branches cleanly | 2 |
+| ✅ P6-2 | Context management: result aging, compaction at 80% (structured summary, "Context compacted" marker), overflow auto-compact-retry | §24/§23 | long-session soak: no overflow hard-fail; compaction marker visible | 3 |
+| ✅ P6-3 | Checkpoint browser UI (file history timeline, restore), user-edit-overwrite warning | §11/§5.4 | restore any file to any step | 2 |
+| ✅ P6-4 | Settings UI complete: Endpoints CRUD + Test connection, Skills manager, Browser allow-list, theme light/dark/system (both palettes per `docs/images/`) | §5.5/§18 | every settings screen round-trips YAML (comment-preservation e2e) | 2.5 |
+| ✅ P6-5 | Error cards everywhere: Retry / Switch model / Edit last message; parse-failure nudges visible | §23 | endpoint kill/restore mid-session recovers | 1.5 |
+| ✅ P6-6 | `genisys_tool` + `introspection`/`file-history` built-in skills | §9.8/§14 | agent can summarize its own session | 1 |
+| ✅ P6-7 | Distribution: **Linux AppImage (SPEC §19.1/G13, primary artifact)** via `make dist` (appimagetool: binary + .desktop + icon) + 4 OS/arch tarballs, version stamping, `genisys version`; README install docs. macOS/Windows releases planned for the future — cross-compile stays green, packaging deferred | G12, G13 | AppImage runs on clean Ubuntu LTS VM (`chmod +x`, no other installs); CI artifacts downloadable; cold start on clean Linux VM < 2 min incl. config | 1 |
 
 **Exit gate (SPEC M5 AC):** all corpus rows pass on a mid-size open model (32B class)
 with zero harness errors.

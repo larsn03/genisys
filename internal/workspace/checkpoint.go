@@ -283,6 +283,25 @@ func (s *ShadowRepo) ChangedSinceWorktree(sha string) ([]string, error) {
 	return out, nil
 }
 
+// FileAt reads one file's content at one commit (file-history preview,
+// SPEC §11 UI: "Roll back to checkpoint…" lists per-file snapshots).
+func (s *ShadowRepo) FileAt(sha, relPath string) ([]byte, error) {
+	tree, err := s.treeOf(sha)
+	if err != nil {
+		return nil, err
+	}
+	f, err := tree.File(filepath.ToSlash(relPath))
+	if err != nil {
+		return nil, fmt.Errorf("workspace: no snapshot of %q at that checkpoint", relPath)
+	}
+	rc, err := f.Reader()
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	return io.ReadAll(rc)
+}
+
 func (s *ShadowRepo) treeOf(sha string) (*object.Tree, error) {
 	c, err := s.r.CommitObject(plumbing.NewHash(sha))
 	if err != nil {

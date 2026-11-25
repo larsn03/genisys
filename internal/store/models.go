@@ -126,6 +126,64 @@ func (db *DB) SetSessionStatus(id, status string) error {
 }
 
 // SetSessionTitle renames a session.
+// DeleteSession hard-deletes a session and its rows (SPEC §5.2 Delete).
+func (db *DB) DeleteSession(id string) error {
+	for _, q := range []string{
+		"DELETE FROM messages WHERE session_id = ?",
+		"DELETE FROM events WHERE session_id = ?",
+		"DELETE FROM permissions WHERE session_id = ?",
+		"DELETE FROM checkpoints WHERE session_id = ?",
+		"DELETE FROM sessions WHERE id = ?",
+	} {
+		if _, err := db.h.Exec(q, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CopyMessages duplicates a session's message rows onto a fresh session
+// (fork, SPEC §5.2).
+func (db *DB) CopyMessages(src, dst string) error {
+	rows, err := db.h.Query("SELECT role, content_json, step_id FROM messages WHERE session_id = ? ORDER BY id", src)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var buf []struct {
+		role string
+		cont []byte
+		step sql.NullString
+	}
+	for rows.Next() {
+		var r struct {
+			role string
+			cont []byte
+			step sql.NullString
+		}
+		if err := rows.Scan(&r.role, &r.cont, &r.step); err != nil {
+			return err
+		}
+		buf = append(buf, r)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, r := range buf {
+		if _, err := db.AppendMessage(dst, r.role, r.cont, r.step.String); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func (db *DB) SetSessionTitle(id, title string) error {
 	_, err := db.h.Exec(`UPDATE sessions SET title=?, updated_at=? WHERE id=?`, title, nowStamp(), id)
 	return err
@@ -488,7 +546,7 @@ func (db *DB) DeleteProject(id string) error {
 
 // SetSessionPinned pins/unpins a session.
 func (db *DB) SetSessionPinned(id string, pinned bool) error {
-	_, err := db.h.Exec(`UPDATE sessions SET pinned=?, updated_at=? WHERE id=?`, pinned, nowStamp(), id)
+	_, err := db.h.Exec(`UPDATE sessions SET pinned=?, updated_at=? WHERE id=?`, boolInt(pinned), nowStamp(), id)
 	return err
 }
 

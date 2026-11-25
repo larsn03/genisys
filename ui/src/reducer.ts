@@ -4,6 +4,11 @@
 
 import type { Item, WSEvent } from "./types";
 
+// deterministic thousands separator (locale-independent, testable)
+function fmtTokens(n: number): string {
+  return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
 let seq = 0;
 const nid = () => `it_${++seq}_${Date.now()}`;
 
@@ -168,6 +173,18 @@ export function reduceEvent(items: Item[], ev: WSEvent): Item[] {
     case "session_error": {
       closeSteps(out);
       out.push({ kind: "error", id: nid(), text: str(p, "error") });
+      break;
+    }
+    case "context_compacted": {
+      // SPEC §24 user-visible marker
+      const before = fmtTokens(Number(p?.["before_tokens"] ?? 0));
+      const after = fmtTokens(Number(p?.["after_tokens"] ?? 0));
+      const why = str(p, "reason") === "overflow" ? "after context overflow" : str(p, "reason");
+      out.push({
+        kind: "marker",
+        id: nid(),
+        text: `Context compacted${why ? ` (${why})` : ""} — ${before} → ${after} tokens`,
+      });
       break;
     }
     case "session_status": {

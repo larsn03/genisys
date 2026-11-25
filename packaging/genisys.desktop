@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Genisys
+GenericName=AI Agent
+Comment=Local-first AI agent for OpenAI-compatible endpoints
+Exec=genisys serve
+Icon=genisys
+Terminal=false
+Categories=Utility;Development;
+StartupWMClass=genisys

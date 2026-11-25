@@ -87,12 +87,56 @@ function ItemView({ item }: { item: Item }) {
     case "deliver":
       return <DeliverCard item={item} />;
     case "error":
+      return <ErrorCard item={item} />;
+    case "marker":
       return (
-        <div className="border border-err/40 bg-err/5 rounded-xl px-4 py-2.5 text-sm text-err">
-          ⚠ {item.text}
+        <div className="flex items-center gap-3 py-1 text-[11px] text-faint">
+          <div className="h-px flex-1 bg-line" />
+          <span className="shrink-0">⇲ {item.text}</span>
+          <div className="h-px flex-1 bg-line" />
         </div>
       );
   }
+}
+
+// SPEC §23: endpoint failures surface as cards with Retry · Switch model ·
+// Edit last message (+ Compact now, since overflow is the common cause).
+function ErrorCard({ item }: { item: Extract<Item, { kind: "error" }> }) {
+  const retryLast = useStore((s) => s.retryLast);
+  const setComposerDraft = useStore((s) => s.setComposerDraft);
+  const setPickModel = useStore((s) => s.setPickModel);
+  const compactNow = useStore((s) => s.compactNow);
+  const lastUserText = useStore((s) => s.lastUserText);
+  const overflow = /context|length|token/i.test(item.text);
+
+  const btn =
+    "text-[12px] px-2.5 py-1 rounded-lg border border-err/40 text-err hover:bg-err/10";
+  return (
+    <div className="border border-err/40 bg-err/5 rounded-xl px-4 py-3 text-sm">
+      <div className="text-err">⚠ {item.text}</div>
+      <div className="mt-2.5 flex flex-wrap gap-2">
+        <button className={btn} onClick={() => void retryLast()}>
+          ↻ Retry
+        </button>
+        <button className={btn} onClick={() => setPickModel(true)}>
+          ⇄ Switch model
+        </button>
+        {lastUserText && (
+          <button
+            className={btn}
+            onClick={() => setComposerDraft(lastUserText)}
+          >
+            ✎ Edit last message
+          </button>
+        )}
+        {overflow && (
+          <button className={btn} onClick={() => void compactNow()}>
+            ⇲ Compact now
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function AssistantBubble({ item }: { item: Extract<Item, { kind: "assistant" }> }) {

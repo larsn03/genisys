@@ -53,6 +53,11 @@ func newMock(t *testing.T, responses ...string) *mockSrv {
 		if hook != nil {
 			hook(n)
 		}
+		if strings.HasPrefix(resp, "STATUS:400:") {
+			w.WriteHeader(400)
+			io.WriteString(w, `{"error":{"message":`+strings.TrimPrefix(resp, "STATUS:400:")+`}}`)
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		io.WriteString(w, resp)
 	}))
@@ -84,6 +89,12 @@ func (m *mockSrv) request(i int) map[string]any {
 func (m *mockSrv) messagesContain(i int, sub string) bool {
 	b, _ := json.Marshal(m.request(i)["messages"])
 	return strings.Contains(string(b), sub)
+}
+
+// status400 makes the mock answer HTTP 400 with an OpenAI-style error body.
+func status400(msg string) string {
+	b, _ := json.Marshal(msg)
+	return "STATUS:400:" + string(b)
 }
 
 func sseText(text string) string {

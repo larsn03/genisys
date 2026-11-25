@@ -108,7 +108,8 @@ func TestBuiltinMaterialize(t *testing.T) {
 			t.Errorf("%s not readable on disk: %v", s.Name, err)
 		}
 	}
-	for _, want := range []string{"skill-management", "documents-presentations-spreadsheets"} {
+	for _, want := range []string{"skill-management", "documents-presentations-spreadsheets",
+		"introspection", "file-history"} {
 		if !names[want] {
 			t.Errorf("missing builtin %s (have %v)", want, names)
 		}

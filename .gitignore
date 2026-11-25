@@ -1,5 +1,7 @@
 # Binaries & build artifacts
 /dist/
+/squashfs-root/
+/tools/
 *.exe
 
 # Frontend (IMPL §2: ui/ builds into ui/dist, embedded via go:embed).
@@ -23,3 +25,4 @@ ui/test-results/
 ui/playwright-report/
 dist/
 __pycache__/
+dist/

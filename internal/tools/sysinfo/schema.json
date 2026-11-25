@@ -1,0 +1,40 @@
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "help",
+        "config_get",
+        "config_set",
+        "config_validate",
+        "session_info",
+        "session_stats",
+        "session_list",
+        "model_set",
+        "compact",
+        "checkpoint_list",
+        "file_history",
+        "file_restore",
+        "skills_list",
+        "skill_install",
+        "skill_remove",
+        "mcp_status",
+        "web_probe",
+        "models_list"
+      ],
+      "description": "Which introspection operation to run. Call help first if unsure."
+    },
+    "path": {
+      "type": "string",
+      "description": "Dotted config key (config_set), workspace-relative file (file_*), or skill name (skill_remove)."
+    },
+    "value": { "type": "string", "description": "New value for config_set (scalar, as text)." },
+    "sha": { "type": "string", "description": "Checkpoint sha for file_restore." },
+    "force": { "type": "boolean", "description": "file_restore: overwrite user edits." },
+    "model_ref": { "type": "string", "description": "model_set: \"<endpoint_id>/<model_id>\"." },
+    "url": { "type": "string", "description": "skill_install: raw SKILL.md URL." },
+    "content": { "type": "string", "description": "skill_install: inline SKILL.md text (frontmatter required)." }
+  },
+  "required": ["action"]
+}

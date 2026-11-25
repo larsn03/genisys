@@ -17,6 +17,16 @@ export function Composer() {
   const [pending, setPending] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
 
+  // error-card "Edit last message" hands the text back (SPEC §23)
+  const draft = useStore((s) => s.composerDraft);
+  useEffect(() => {
+    if (draft != null) {
+      setText(draft);
+      useStore.setState({ composerDraft: null });
+      requestAnimationFrame(() => ta.current?.focus());
+    }
+  }, [draft]);
+
   const submit = async (mode?: "queue" | "interrupt") => {
     const t = text.trim();
     if ((!t && !pending.length) || !current) return;
@@ -245,6 +255,13 @@ function Palette({
 
 function ModelChip() {
   const [open, setOpen] = useState(false);
+  const pickModel = useStore((s) => s.pickModel);
+  useEffect(() => {
+    if (pickModel) {
+      setOpen(true);
+      useStore.setState({ pickModel: false });
+    }
+  }, [pickModel]);
   const models = useStore((s) => s.models);
   const current = useStore((s) => s.current);
   const sessions = useStore((s) => s.sessions);

@@ -73,6 +73,7 @@ export type Item =
       state: "pending" | "delivered";
     }
   | { kind: "error"; id: string; text: string }
+  | { kind: "marker"; id: string; text: string }
   | { kind: "interrupt"; id: string; step: string }
   | { kind: "deliver"; id: string; path: string; attached: boolean };
 

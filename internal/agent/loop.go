@@ -39,7 +39,9 @@ type Deps struct {
 	SubagentModel  string         // model_ref override for agentic_find (SPEC §12)
 	SystemOverride string         // pre-rendered system prompt (sub-agents, §12)
 	MCP            *mcp.Manager   // configured MCP servers (SPEC §15)
+	ContextWindow  int            // model context window; drives compaction (§24)
 	BrowserOrigins []string       // browser.allowed_origins (SPEC §5.4)
+	Gen            *tools.Genisys // genisys_tool facade (SPEC 9.8)
 
 	// P2 persistence (optional; nil = in-memory only).
 	SessionID  string
@@ -58,6 +60,10 @@ type Session struct {
 	steps    int
 	lastSig  string
 	repeats  int
+
+	// P6-2 context management (SPEC §24)
+	lastPromptTokens int
+	overflowTries    int
 }
 
 // NewSession builds a session with defaults filled.
@@ -181,6 +187,14 @@ func (s *Session) loop(ctx context.Context) (string, error) {
 				continue // interrupt: re-enter loop, message injected at top
 			}
 			cancel()
+			// SPEC §23: context overflow → auto-compact once, retry; a
+			// second overflow surfaces as the hard error card.
+			if isOverflow(err) && s.overflowTries == 0 {
+				s.overflowTries++
+				if s.Compact(ctx, "overflow") {
+					continue
+				}
+			}
 			return "", err
 		}
 		if len(calls) == 0 {
@@ -204,6 +218,11 @@ func (s *Session) loop(ctx context.Context) (string, error) {
 		s.runTools(stepCtx, stepID, calls)
 		cancel()
 		s.emit(events.StepFinished, map[string]any{"step": stepID, "stop_reason": "tool_use"})
+
+		// SPEC §24: compact at 80% between steps, before the next render
+		if s.maybeCompact(ctx) {
+			s.overflowTries = 0
+		}
 	}
 }
 
@@ -234,7 +253,7 @@ func (s *Session) oneStep(stepCtx context.Context, stepID string) (string, []mod
 	}
 	req := model.ChatRequest{
 		Model:    s.d.Model,
-		Messages: append([]model.Message{{Role: "system", Content: sysPrompt}}, s.requestMessages()...),
+		Messages: append([]model.Message{{Role: "system", Content: sysPrompt}}, s.requestAged()...),
 	}
 	if s.d.ToolsMode == "native" {
 		req.Tools = s.d.Tools.Definitions()
@@ -243,6 +262,7 @@ func (s *Session) oneStep(stepCtx context.Context, stepID string) (string, []mod
 
 	comp, err := s.d.Client.CompleteWith(stepCtx, req, s.d.Retry)
 	if comp != nil && comp.Usage.TotalTokens > 0 {
+		s.lastPromptTokens = comp.Usage.PromptTokens // calibrate the meter (§24)
 		if t := s.d.Transcript; t != nil {
 			_ = t.Append(store.KindUsage, stepID, comp.Usage)
 		}
@@ -310,6 +330,7 @@ func (s *Session) runTools(ctx context.Context, stepID string, calls []model.Too
 				RuntimeDir:     s.d.RuntimeDir,
 				MCP:            s.d.MCP,
 				BrowserOrigins: s.d.BrowserOrigins,
+				Gen:            s.d.Gen,
 				Subagent: func(c context.Context, cwd, target string) string {
 					return SubagentQuery(c, s.d, cwd, target, stepID)
 				},

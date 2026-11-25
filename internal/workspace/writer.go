@@ -38,6 +38,11 @@ type ReadState struct {
 type Writer struct {
 	mu sync.Mutex // critical section: non-preemptible (SPEC §7.4)
 
+	// lastWritten records the content hash each mutation left on disk
+	// (best-effort, in-memory). restoreFile uses it to distinguish user
+	// edits after the agent's last write from uncommitted agent output.
+	lastWritten map[string]string
+
 	grants    *Grants
 	cp        Checkpointer
 	db        *store.DB
@@ -193,6 +198,15 @@ func (t *Txn) Touch(canonicalPath string) error {
 // ErrSkipMutate aborts a Mutate without checkpoint churn.
 var ErrSkipMutate = errors.New("workspace: skip mutate")
 
+// LastWritten reports the hash this writer process last applied to abs
+// (known=false if this process never wrote it — e.g. after a restart).
+func (w *Writer) LastWritten(abs string) (string, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	h, ok := w.lastWritten[abs]
+	return h, ok
+}
+
 // Mutate runs the critical section: ctx is honored BEFORE entering; once
 // inside, cancellation cannot preempt (workspace is never half-written).
 // label describes the change for the checkpoint ledger ("before
@@ -235,6 +249,14 @@ func (w *Writer) Mutate(ctx context.Context, stepID, label string, paths []strin
 			change = "deleted"
 		case string(old) == string(neu):
 			continue
+		}
+		if neu != nil {
+			if w.lastWritten == nil {
+				w.lastWritten = map[string]string{}
+			}
+			w.lastWritten[p] = fmt.Sprintf("%x", sha256.Sum256(neu))
+		} else if w.lastWritten != nil {
+			delete(w.lastWritten, p)
 		}
 		diff := unifiedDiff(display(p), old, neu)
 		w.emit.Emit(events.Event{Type: events.FileChanged, Payload: map[string]any{

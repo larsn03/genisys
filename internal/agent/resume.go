@@ -43,6 +43,10 @@ func Resume(d Deps) (*Session, error) {
 	}
 	var lastErr string
 	for _, e := range entries {
+		if e.Kind == KindCompact {
+			applyCompactEntry(s, e.Payload) // §24: replay compaction exactly
+			continue
+		}
 		if e.Kind != store.KindMessage {
 			continue
 		}

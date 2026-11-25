@@ -59,10 +59,21 @@ interface State {
   select: (id: string) => Promise<void>;
   createSession: (projectId?: string) => Promise<void>;
   archive: (id: string) => Promise<void>;
+  hardDelete: (id: string) => Promise<void>;
+  fork: (id: string) => Promise<void>;
+  rename: (id: string, title: string) => Promise<void>;
+  togglePin: (id: string) => Promise<void>;
+  compactNow: () => Promise<void>;
   setModel: (ref: string) => Promise<void>;
   loadModels: () => Promise<void>;
 
   send: (text: string, mode?: "queue" | "interrupt") => Promise<void>;
+  retryLast: () => Promise<void>;
+  lastUserText: string;
+  composerDraft: string | null;
+  setComposerDraft: (t: string | null) => void;
+  pickModel: boolean;
+  setPickModel: (v: boolean) => void;
   stop: () => Promise<void>;
   answer: (permId: number, granted: boolean) => Promise<void>;
   withdraw: (ijId: string) => Promise<void>;
@@ -78,6 +89,13 @@ interface State {
   openBrowser: (url: string) => void;
   closeBrowser: () => void;
   openPreview: (path: string) => void;
+  applyTheme: () => void;
+  loadSkills: () => void;
+  settingsOpen: boolean;
+  setSettingsOpen: (v: boolean) => void;
+  historyPath: string | null;
+  openHistory: (path: string) => void;
+  closeHistory: () => void;
   closePreview: () => void;
   setShowAll: (v: boolean) => void;
   setLayout: (patch: Partial<PaneState>) => void;
@@ -110,6 +128,11 @@ export const useStore = create<State>((set, get) => ({
   layout: loadLayout(),
   error: null,
   preview: null,
+  lastUserText: "",
+  composerDraft: null,
+  setComposerDraft: (t) => set({ composerDraft: t }),
+  pickModel: false,
+  setPickModel: (v) => set({ pickModel: v }),
   browser: null,
   browserOrigins: [],
   skills: [],
@@ -152,6 +175,11 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async select(id) {
+    try {
+      localStorage.setItem(`gs_seen_${id}`, new Date().toISOString());
+    } catch {
+      /* private mode */
+    }
     conn?.close();
     const rows = await api.messages(id).catch(() => []);
     const sess = get().sessions.find((s) => s.id === id);
@@ -197,12 +225,7 @@ export const useStore = create<State>((set, get) => ({
     void get().refreshFiles("");
     void get().refreshGit();
     void get().refreshCheckpoints();
-    if (get().skills.length === 0) {
-      api
-        .skills()
-        .then((r) => set({ skills: r.skills }))
-        .catch(() => {});
-    }
+    if (get().skills.length === 0) get().loadSkills();
     if (get().browserOrigins.length === 0) {
       api
         .browserOrigins()
@@ -216,6 +239,46 @@ export const useStore = create<State>((set, get) => ({
     set({ error: null });
     await get().refreshSessions();
     await get().select(s.id);
+  },
+
+  async hardDelete(id) {
+    await api.deleteSession(id);
+    if (get().current === id) {
+      conn?.close();
+      set({ current: null, items: [] });
+    }
+    await get().refreshSessions();
+  },
+
+  async fork(id) {
+    const row = await api.forkSession(id);
+    set({ error: null });
+    await get().refreshSessions();
+    await get().select(row.id);
+  },
+
+  async rename(id, title) {
+    await api.patchSession(id, { title }).catch((e) => set({ error: String(e) }));
+    await get().refreshSessions();
+  },
+
+  async togglePin(id) {
+    const row = get().sessions.find((s) => s.id === id);
+    if (!row) return;
+    await api
+      .patchSession(id, { pinned: !row.pinned })
+      .catch((e) => set({ error: String(e) }));
+    await get().refreshSessions();
+  },
+
+  async compactNow() {
+    const id = get().current;
+    if (!id) return;
+    try {
+      await api.compact(id);
+    } catch (e) {
+      set({ error: String(e) });
+    }
   },
 
   async archive(id) {
@@ -242,6 +305,7 @@ export const useStore = create<State>((set, get) => ({
     if (!id) return;
     // @skill:name chips → skills[] on the prompt API (SPEC §14 explicit
     // invocation); the harness appends the read-SKILL.md-first line.
+    set({ lastUserText: text });
     const skillNames = [...text.matchAll(/(?:^|\s)@skill:([\w.-]+)/g)].map((m) => m[1]);
     const clean = text.replace(/(?:^|\s)@skill:([\w.-]+)/g, " ").trim();
     try {
@@ -250,6 +314,11 @@ export const useStore = create<State>((set, get) => ({
     } catch (e) {
       set({ error: String(e) });
     }
+  },
+
+  async retryLast() {
+    const t = get().lastUserText;
+    if (t) await get().send(t, "queue");
   },
 
   async stop() {
@@ -361,6 +430,32 @@ export const useStore = create<State>((set, get) => ({
     set((s) => ({ browser: { url, nonce: (s.browser?.nonce ?? 0) + 1 } })),
   closeBrowser: () => set({ browser: null }),
   openPreview: (path) => set({ preview: path }),
+  applyTheme: () => {
+    api
+      .settings()
+      .then((st) => {
+        const t = st.ui?.theme || "dark";
+        const eff =
+          t === "system"
+            ? matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark"
+            : t;
+        document.documentElement.dataset.theme = eff;
+      })
+      .catch(() => {});
+  },
+  loadSkills: () => {
+    api
+      .skills()
+      .then((r) => set({ skills: r.skills }))
+      .catch(() => {});
+  },
+  settingsOpen: false,
+  setSettingsOpen: (v) => set({ settingsOpen: v }),
+  historyPath: null,
+  openHistory: (path) => set({ historyPath: path }),
+  closeHistory: () => set({ historyPath: null }),
   closePreview: () => set({ preview: null }),
 
   setShowAll: (v) => set({ showAll: v }),

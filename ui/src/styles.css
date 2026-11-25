@@ -17,6 +17,24 @@
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
+/* Light palette (SPEC §5.5 theme switch; dark stays the default). */
+:root[data-theme="light"] {
+  --color-bg: #f6f7f9;
+  --color-panel: #ffffff;
+  --color-panel2: #eceef2;
+  --color-line: #d8dbe2;
+  --color-ink: #1b1d24;
+  --color-mute: #5b616c;
+  --color-faint: #8b909a;
+  --color-accent: #6a5ae0;
+  --color-accent2: #1f8fd6;
+  --color-ok: #16a34a;
+  --color-err: #dc2626;
+  --color-warn: #d97706;
+  color-scheme: light;
+}
+:root[data-theme="dark"] { color-scheme: dark; }
+
 html, body, #root { height: 100%; }
 body { background: var(--color-bg); color: var(--color-ink); font-family: var(--font-sans); }
 

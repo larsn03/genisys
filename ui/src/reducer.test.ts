@@ -118,6 +118,14 @@ describe("reduceEvent", () => {
     expect(ij.state).toBe("delivered");
   });
 
+  it("context_compacted becomes a marker", () => {
+    const items = reduceEvent([], ev("context_compacted", { reason: "threshold", before_tokens: 90000, after_tokens: 12000 }));
+    const m = all(items, "marker")[0] as Extract<Item, { kind: "marker" }>;
+    expect(m.text).toContain("Context compacted");
+    expect(m.text).toContain("90,000");
+    expect(m.text).toContain("12,000");
+  });
+
   it("deliver + attach events become cards", () => {
     let items: Item[] = [];
     for (const e of [

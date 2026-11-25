@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+    tags: ["v*"]
 
 jobs:
   lint:
@@ -70,3 +71,45 @@ jobs:
         run: cd ui && npx playwright install --with-deps chromium
       - name: run e2e
         run: node e2e/run.mjs
+
+  # P6-7 (SPEC §19.1/G13): AppImage is the primary artifact — build and
+  # smoke-run it on every change; publish on tag via the release job.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: ui/package-lock.json }
+      - name: build UI (embedded in the binary)
+        run: cd ui && npm ci && npm run build
+      - name: install appimagetool
+        run: |
+          curl -sL -o /tmp/at.AppImage https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/at.AppImage
+          /tmp/at.AppImage --appimage-extract
+          echo "APPIAMETOOL=$GITHUB_WORKSPACE/squashfs-root/usr/bin/appimagetool" >> "$GITHUB_ENV"
+      - name: dist (tarballs + AppImage)
+        run: make dist
+      - name: smoke-run the AppImage
+        run: |
+          ./dist/Genisys-*-x86_64.appimage --appimage-extract-and-run serve --no-open &
+          sleep 2
+          curl -fsS http://127.0.0.1:8710/api/version | grep -q version
+          kill %1
+      - uses: actions/upload-artifact@v4
+        with: { name: dist, path: dist/ }
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, e2e, package]
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: dist, path: dist }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          fail_on_unmatched_files: true

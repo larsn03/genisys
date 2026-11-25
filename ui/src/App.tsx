@@ -8,6 +8,8 @@ import { MessageStream } from "./components/MessageStream";
 import { Composer } from "./components/Composer";
 import { RightPanel } from "./components/RightPanel";
 import { PreviewOverlay } from "./components/PreviewOverlay";
+import { SettingsModal } from "./components/SettingsModal";
+import { Onboarding } from "./components/Onboarding";
 
 export default function App() {
   const sessions = useStore((s) => s.sessions);
@@ -22,6 +24,16 @@ export default function App() {
   const layout = useStore((s) => s.layout);
   const setLayout = useStore((s) => s.setLayout);
   const loadModels = useStore((s) => s.loadModels);
+  const applyTheme = useStore((s) => s.applyTheme);
+  const models = useStore((s) => s.models);
+
+  useEffect(() => {
+    applyTheme();
+    const mq = matchMedia("(prefers-color-scheme: light)");
+    const onMQ = () => applyTheme();
+    mq.addEventListener("change", onMQ);
+    return () => mq.removeEventListener("change", onMQ);
+  }, [applyTheme]);
 
   useEffect(() => {
     void loadModels();
@@ -129,18 +141,29 @@ export default function App() {
               </span>
               <span className="font-mono">{sess?.model_ref}</span>
               {running && <span className="text-accent2 animate-pulse">working</span>}
+              <button
+                onClick={() => useStore.getState().setSettingsOpen(true)}
+                className="ml-auto text-faint hover:text-ink text-sm"
+                title="Settings"
+              >
+                ⚙
+              </button>
             </header>
             <MessageStream />
             <Composer />
           </>
         ) : (
           <div className="flex-1 grid place-items-center text-mute">
-            <div className="text-center">
-              <div className="text-3xl mb-2">⚡</div>
-              <div className="text-sm">
-                Create a session and ask Genisys to build, fix, or explain something.
+            {models.length === 0 ? (
+              <Onboarding />
+            ) : (
+              <div className="text-center">
+                <div className="text-3xl mb-2">⚡</div>
+                <div className="text-sm">
+                  Create a session and ask Genisys to build, fix, or explain something.
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
       </main>
@@ -170,6 +193,7 @@ export default function App() {
       )}
 
       <PreviewOverlay />
+      <SettingsModal />
 
       {error && (
         <div
@@ -183,6 +207,19 @@ export default function App() {
   );
 }
 
+// finished-in-background dot (SPEC §5.2): events landed after our last visit
+function isUnread(s: import("./types").SessionRow, current: string | null): boolean {
+  if (s.id === current || s.status === "running" || s.status === "archived") return false;
+  let seen = "";
+  try {
+    seen = localStorage.getItem(`gs_seen_${s.id}`) ?? "";
+  } catch {
+    return false;
+  }
+  if (!seen) return true; // never opened since boot
+  return s.updated_at > seen;
+}
+
 function SessionRowView({
   s,
   current,
@@ -193,34 +230,110 @@ function SessionRowView({
   running: boolean;
 }) {
   const select = useStore((st) => st.select);
+  const fork = useStore((st) => st.fork);
+  const rename = useStore((st) => st.rename);
+  const togglePin = useStore((st) => st.togglePin);
+  const hardDelete = useStore((st) => st.hardDelete);
   const archive = useStore((st) => st.archive);
+  const [menu, setMenu] = useState(false);
+  const [naming, setNaming] = useState(false);
+  const [title, setTitle] = useState(s.title);
+  const unread = isUnread(s, current);
+
+  const act = (fn: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setMenu(false);
+    fn();
+  };
+
   return (
     <div
-      onClick={() => void select(s.id)}
-      className={`group flex items-center gap-2 px-2.5 py-2 rounded-lg cursor-pointer text-[13px] ${
-        s.id === current ? "bg-panel2 text-ink" : "text-mute hover:bg-panel2/60"
-      }`}
+      onClick={() => !naming && void select(s.id)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        setMenu(true);
+      }}
+      className="relative group flex items-center gap-2 px-2.5 py-2 rounded-lg cursor-pointer text-[13px]"
     >
-      <span
-        className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-          s.id === current && running
-            ? "bg-accent2 animate-pulse"
-            : s.pinned
-              ? "bg-warn"
-              : "bg-line"
-        }`}
-      />
-      <span className="truncate flex-1">{s.title}</span>
+      {naming ? (
+        <input
+          autoFocus
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onBlur={() => {
+            setNaming(false);
+            if (title.trim() && title !== s.title) void rename(s.id, title.trim());
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            if (e.key === "Escape") {
+              setTitle(s.title);
+              setNaming(false);
+            }
+          }}
+          className="flex-1 bg-transparent outline-none border-b border-accent text-[13px] min-w-0"
+        />
+      ) : (
+        <>
+          <span
+            className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+              s.id === current && running
+                ? "bg-accent2 animate-pulse"
+                : unread
+                  ? "bg-accent"
+                  : s.pinned
+                    ? "bg-warn"
+                    : "bg-line"
+            }`}
+            title={unread ? "agent finished while you were away" : ""}
+          />
+          <span className={`truncate flex-1 ${unread ? "text-ink font-medium" : ""}`}>{s.title}</span>
+        </>
+      )}
       <button
         onClick={(e) => {
           e.stopPropagation();
-          void archive(s.id);
+          setMenu((m) => !m);
         }}
-        className="opacity-0 group-hover:opacity-100 text-faint hover:text-err text-xs"
-        title="Archive session"
+        className="opacity-0 group-hover:opacity-100 text-faint hover:text-ink text-xs px-1"
+        title="Session menu"
       >
-        ✕
+        ⋯
       </button>
+      {menu && (
+        <div
+          className="absolute right-2 top-8 z-30 w-40 bg-panel border border-line rounded-xl shadow-2xl py-1 text-[12px]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button className="menu-item" onClick={act(() => togglePin(s.id))}>
+            {s.pinned ? "Unpin" : "Pin"}
+          </button>
+          <button
+            className="menu-item"
+            onClick={act(() => {
+              setTitle(s.title);
+              setNaming(true);
+            })}
+          >
+            Rename
+          </button>
+          <button className="menu-item" onClick={act(() => void fork(s.id))}>
+            Fork
+          </button>
+          <button className="menu-item" onClick={act(() => void archive(s.id))}>
+            Archive
+          </button>
+          <button
+            className="menu-item text-err"
+            onClick={act(() => {
+              if (confirm(`Delete "${s.title}" permanently?`)) void hardDelete(s.id);
+            })}
+          >
+            Delete
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -53,6 +53,19 @@ func LoadApp(path string) (*Config, error) {
 	return cfg, nil
 }
 
+// ParseApp validates raw YAML bytes for the app config (settings UI PUT).
+func ParseApp(path string, data []byte) (*Config, error) {
+	cfg := &Config{}
+	if err := decodeStrict(path, data, cfg); err != nil {
+		return nil, err
+	}
+	cfg.WithDefaults()
+	if issues := ValidateApp(cfg, path); len(issues) > 0 {
+		return cfg, Issues(issues)
+	}
+	return cfg, nil
+}
+
 // LoadProject reads and validates one project.yaml (SPEC §18.3).
 func LoadProject(path string) (*ProjectConfig, error) {
 	data, err := read(path)

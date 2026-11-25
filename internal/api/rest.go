@@ -24,6 +24,7 @@ import (
 	"github.com/larsn03/genisys/internal/agent"
 	"github.com/larsn03/genisys/internal/apiconfig"
 	"github.com/larsn03/genisys/internal/app"
+	"github.com/larsn03/genisys/internal/model"
 	"github.com/larsn03/genisys/internal/skills"
 	"github.com/larsn03/genisys/internal/store"
 	"github.com/larsn03/genisys/internal/supervisor"
@@ -45,6 +46,8 @@ func (s *Server) routes() {
 	// config (settings UI): GET raw YAML; PATCH dotted keys comment-preservingly
 	m.HandleFunc("GET /api/config", s.getConfig)
 	m.HandleFunc("PATCH /api/config", s.patchConfig)
+	m.HandleFunc("PUT /api/config", s.putConfig)
+	m.HandleFunc("GET /api/settings", s.getSettings)
 
 	m.HandleFunc("GET /api/projects", s.listProjects)
 	m.HandleFunc("POST /api/projects", s.createProject)
@@ -56,16 +59,21 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/sessions/{id}", s.getSession)
 	m.HandleFunc("PATCH /api/sessions/{id}", s.patchSession)
 	m.HandleFunc("DELETE /api/sessions/{id}", s.archiveSession)
+	m.HandleFunc("POST /api/sessions/{id}/fork", s.forkSession)
 
 	m.HandleFunc("GET /api/sessions/{id}/messages", s.sessionMessages)
 	m.HandleFunc("GET /api/sessions/{id}/events", s.sessionEvents)
 	m.HandleFunc("POST /api/sessions/{id}/prompt", s.prompt)
 	m.HandleFunc("POST /api/sessions/{id}/stop", s.stop)
+	m.HandleFunc("POST /api/sessions/{id}/compact", s.compact)
 	m.HandleFunc("GET /api/sessions/{id}/interjections", s.listInterjections)
 	m.HandleFunc("POST /api/sessions/{id}/interjections/{ij}/{op}", s.interjectionOp)
 	m.HandleFunc("POST /api/sessions/{id}/permissions/{pid}", s.answerPermission)
 	m.HandleFunc("GET /api/sessions/{id}/checkpoints", s.listCheckpoints)
 	m.HandleFunc("GET /api/sessions/{id}/git-status", s.gitStatus)
+	m.HandleFunc("GET /api/sessions/{id}/file-history", s.fileHistory)
+	m.HandleFunc("GET /api/sessions/{id}/file-at", s.fileAt)
+	m.HandleFunc("POST /api/sessions/{id}/restore-file", s.restoreFile)
 	m.HandleFunc("POST /api/sessions/{id}/revert", s.revert)
 	m.HandleFunc("GET /api/sessions/{id}/files", s.listFiles)
 	m.HandleFunc("GET /api/sessions/{id}/file", s.getFile)
@@ -74,6 +82,9 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/sessions/{id}/upload", s.upload)
 	m.HandleFunc("GET /api/sessions/{id}/preview", s.preview)
 
+	m.HandleFunc("POST /api/web/probe", s.webProbe)
+	m.HandleFunc("POST /api/endpoints/{id}/test", s.testEndpoint)
+	m.HandleFunc("POST /api/endpoints/test-url", s.testEndpointURL)
 	m.HandleFunc("GET /api/browser/origins", func(w http.ResponseWriter, r *http.Request) {
 		origins := s.App.Cfg.Browser.AllowedOrigins
 		if origins == nil {
@@ -93,6 +104,90 @@ var Version = "dev"
 
 // --- config -------------------------------------------------------------------
 
+// testEndpointURL validates a base URL typed into onboarding before it
+// is ever written to config.yaml.
+func (s *Server) testEndpointURL(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		BaseURL string `json:"base_url"`
+	}
+	if err := readJSON(r, &in); err != nil || in.BaseURL == "" {
+		writeErr(w, 400, "base_url is required")
+		return
+	}
+	client, err := model.New(in.BaseURL, "")
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	models, err := client.ListModels(ctx)
+	if err != nil {
+		writeJSON(w, 200, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "models": models})
+}
+
+// testEndpoint: settings "Test connection" (SPEC §5.5). Cheap by default
+// (GET /models); ?probe=<model_id> additionally runs the capability probe.
+func (s *Server) testEndpoint(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var ep *apiconfig.Endpoint
+	for i := range s.App.Cfg.Endpoints {
+		if s.App.Cfg.Endpoints[i].ID == id {
+			ep = &s.App.Cfg.Endpoints[i]
+			break
+		}
+	}
+	if ep == nil {
+		writeErr(w, 404, "endpoint "+id+" not in config")
+		return
+	}
+	key := os.Getenv(ep.APIKeyEnv)
+	if key == "" {
+		key = ep.APIKey
+	}
+	client, err := model.New(ep.BaseURL, key)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	out := map[string]any{"endpoint": id, "base_url": ep.BaseURL}
+	models, err := client.ListModels(ctx)
+	if err != nil {
+		out["ok"] = false
+		out["error"] = err.Error()
+		writeJSON(w, 200, out)
+		return
+	}
+	out["ok"] = true
+	out["models"] = models
+	if probeID := r.URL.Query().Get("probe"); probeID != "" {
+		res, err := client.Probe(ctx, probeID)
+		if err != nil {
+			out["probe_error"] = err.Error()
+		} else {
+			out["probe"] = res
+		}
+	}
+	writeJSON(w, 200, out)
+}
+
+// webProbe powers the settings screen "Test" button (SPEC §5.5 search
+// tab; same classification as `genisys search test`).
+func (s *Server) webProbe(w http.ResponseWriter, r *http.Request) {
+	c := s.App.Websearch()
+	if c == nil {
+		writeJSON(w, 200, map[string]any{"enabled": false,
+			"message": "web search disabled — set web.provider and web.searxng.base_url"})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"enabled": true, "probe": c.Probe(r.Context())})
+}
+
 func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 	data, err := os.ReadFile(s.ConfigPath)
 	if err != nil {
@@ -104,6 +199,104 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// getSettings returns the structured view of config.yaml the settings
+// screens render (SPEC §5.5). Editing still goes through PATCH (dotted
+// keys) or PUT (raw YAML) so comments in the file survive.
+func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
+	c := s.App.Cfg
+	eps := []map[string]any{}
+	for _, ep := range c.Endpoints {
+		mods := []map[string]any{}
+		for _, m := range ep.Models {
+			mods = append(mods, map[string]any{
+				"id": m.ID, "context_window": m.ContextWindow,
+				"tools": m.Supports.Tools, "vision": m.Supports.Vision,
+			})
+		}
+		eps = append(eps, map[string]any{
+			"id": ep.ID, "name": ep.Name, "base_url": ep.BaseURL,
+			"api_key_env": ep.APIKeyEnv, "models": mods,
+		})
+	}
+	mcps := []map[string]any{}
+	for _, m := range c.MCPServers {
+		mcps = append(mcps, map[string]any{
+			"name": m.Name, "command": m.Command, "args": m.Args,
+			"url": m.URL, "transport": m.Transport, "enabled": m.Enabled,
+		})
+	}
+	origins := c.Browser.AllowedOrigins
+	if origins == nil {
+		origins = []string{}
+	}
+	imports := c.Skills.ImportFromOtherApps
+	if imports == nil {
+		imports = []string{}
+	}
+	writeJSON(w, 200, map[string]any{
+		"default_model": c.DefaultModel,
+		"agent": map[string]any{
+			"max_steps": c.Agent.MaxSteps, "shell_timeout_ms": c.Agent.ShellTimeoutMs,
+			"subagent_model": deref(c.Agent.SubagentModel),
+			"interjection": map[string]any{
+				"default_mode": c.Agent.Interjection.DefaultMode,
+				"boundary":     c.Agent.Interjection.Boundary,
+			},
+		},
+		"web": map[string]any{
+			"search_enabled": c.Web.SearchEnabled, "provider": c.Web.Provider,
+			"searxng": map[string]any{
+				"base_url": c.Web.Searxng.BaseURL, "language": c.Web.Searxng.Language,
+				"categories": c.Web.Searxng.Categories, "timeout_ms": c.Web.Searxng.TimeoutMs,
+			},
+			"tavily": map[string]any{"api_key_env": c.Web.Tavily.APIKeyEnv},
+			"brave":  map[string]any{"api_key_env": c.Web.Brave.APIKeyEnv},
+		},
+		"browser":     map[string]any{"allowed_origins": origins},
+		"skills":      map[string]any{"import_from_other_apps": imports},
+		"mcp_servers": mcps,
+		"endpoints":   eps,
+		"ui":          map[string]any{"theme": c.UI.Theme},
+	})
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// putConfig replaces config.yaml wholesale (settings "Advanced" tab).
+// Parse+validate BEFORE writing: a broken save can never brick boot.
+func (s *Server) putConfig(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		YAML string `json:"yaml"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	cfg, err := apiconfig.ParseApp(s.ConfigPath, []byte(in.YAML))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	tmp := s.ConfigPath + ".tmp"
+	if err := os.WriteFile(tmp, []byte(in.YAML), 0o644); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if err := os.Rename(tmp, s.ConfigPath); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	s.App.Cfg = cfg
+	s.getConfig(w, r)
+}
+
+// (patchConfig below uses apiconfig.GetNode to keep sequences intact)
+
 func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 	var kv map[string]string
 	if err := readJSON(r, &kv); err != nil {
@@ -113,7 +306,22 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 	path := s.ConfigPath
 	err := apiconfig.Update(path, func(doc *yaml.Node) error {
 		for k, v := range kv {
-			if err := apiconfig.Set(doc, strings.Split(k, "."), v); err != nil {
+			keys := strings.Split(k, ".")
+			// list-valued keys (browser.allowed_origins…) take a
+			// comma-separated value and stay sequences
+			if cur, ok := apiconfig.GetNode(doc, keys); ok && cur.Kind == yaml.SequenceNode {
+				vals := []string{}
+				for _, part := range strings.Split(v, ",") {
+					if t := strings.TrimSpace(part); t != "" {
+						vals = append(vals, t)
+					}
+				}
+				if err := apiconfig.SetList(doc, keys, vals); err != nil {
+					return err
+				}
+				continue
+			}
+			if err := apiconfig.Set(doc, keys, v); err != nil {
 				return err
 			}
 		}
@@ -288,11 +496,58 @@ func (s *Server) archiveSession(w http.ResponseWriter, r *http.Request) {
 	if wk, err := s.Sup.Worker(row.ID); err == nil {
 		wk.Close()
 	}
+	// ?hard=1 deletes for real (SPEC §5.2: Archive vs Delete)
+	if r.URL.Query().Get("hard") == "1" {
+		if err := s.App.DB.DeleteSession(row.ID); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		_ = os.RemoveAll(filepath.Dir(agent.TranscriptPath(s.App.Root, row.ProjectID, row.ID)))
+		writeJSON(w, 200, map[string]bool{"ok": true, "hard": true})
+		return
+	}
 	if err := s.App.DB.SetSessionStatus(row.ID, store.StatusArchived); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// forkSession branches a session: fresh row + copied transcript + copied
+// message rows (SPEC §5.2). Forking mid-run is safe — the source keeps
+// running and appending; the fork branches from committed state.
+func (s *Server) forkSession(w http.ResponseWriter, r *http.Request) {
+	row := s.sessionRow(w, r)
+	if row == nil {
+		return
+	}
+	var in struct {
+		Title string `json:"title"`
+	}
+	_ = readJSON(r, &in)
+	title := in.Title
+	if title == "" {
+		title = row.Title + " (fork)"
+	}
+	fork := &store.Session{
+		ProjectID: row.ProjectID, Title: title, Persona: row.Persona,
+		ModelRef: row.ModelRef, ForkedFrom: row.ID,
+	}
+	if err := s.App.DB.CreateSession(fork); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	src := agent.TranscriptPath(s.App.Root, row.ProjectID, row.ID)
+	dst := agent.TranscriptPath(s.App.Root, fork.ProjectID, fork.ID)
+	if b, err := os.ReadFile(src); err == nil {
+		_ = os.MkdirAll(filepath.Dir(dst), 0o755)
+		_ = os.WriteFile(dst, b, 0o644)
+	}
+	if err := s.App.DB.CopyMessages(row.ID, fork.ID); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 201, fork)
 }
 
 func (s *Server) sessionMessages(w http.ResponseWriter, r *http.Request) {
@@ -458,6 +713,23 @@ func (s *Server) prompt(w http.ResponseWriter, r *http.Request) {
 		state = "queued"
 	}
 	writeJSON(w, 202, map[string]string{"state": state})
+}
+
+func (s *Server) compact(w http.ResponseWriter, r *http.Request) {
+	row := s.sessionRow(w, r)
+	if row == nil {
+		return
+	}
+	wk, err := s.Sup.Worker(row.ID)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if err := wk.Compact(r.Context()); err != nil {
+		writeErr(w, 409, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]string{"state": "compacted"})
 }
 
 func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
@@ -925,6 +1197,139 @@ func (s *Server) listModels(w http.ResponseWriter, r *http.Request) {
 
 // gitStatus returns per-file VCS badges for the session's workspace
 // (FilesTree badges, SPEC §5.4). {repo:false} when not a git checkout.
+// --- file history (SPEC §11 UI: per-file snapshot timeline + restore) ----
+
+// shadowFor resolves the session's shadow repo + cwd via its worker.
+func (s *Server) shadowFor(w http.ResponseWriter, r *http.Request) (*app.Handle, bool) {
+	row := s.sessionRow(w, r)
+	if row == nil {
+		return nil, false
+	}
+	if row.ProjectID == "" {
+		writeErr(w, 400, "free-chat sessions have no checkpoints")
+		return nil, false
+	}
+	wk, err := s.Sup.Worker(row.ID)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return nil, false
+	}
+	h, err := wk.Ensure()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return nil, false
+	}
+	if h.Shadow == nil {
+		writeErr(w, 400, "no checkpoint repo for this session")
+		return nil, false
+	}
+	return h, true
+}
+
+// cleanRel validates a workspace-relative path (no escape, no absolute).
+func cleanRel(w http.ResponseWriter, raw string) (string, bool) {
+	p := filepath.ToSlash(strings.TrimSpace(raw))
+	if p == "" || filepath.IsAbs(p) || p == "." || strings.HasPrefix(p, "../") || strings.Contains(p, "/../") {
+		writeErr(w, 400, "path must be workspace-relative")
+		return "", false
+	}
+	return p, true
+}
+
+func (s *Server) fileHistory(w http.ResponseWriter, r *http.Request) {
+	h, ok := s.shadowFor(w, r)
+	if !ok {
+		return
+	}
+	rel, ok := cleanRel(w, r.URL.Query().Get("path"))
+	if !ok {
+		return
+	}
+	hist, err := h.Shadow.FileHistory(rel, 100)
+	if err != nil {
+		writeErr(w, 404, err.Error())
+		return
+	}
+	out := []map[string]any{}
+	for _, c := range hist {
+		out = append(out, map[string]any{"sha": c.SHA, "label": c.Label, "when": c.When.UTC().Format(time.RFC3339)})
+	}
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) fileAt(w http.ResponseWriter, r *http.Request) {
+	h, ok := s.shadowFor(w, r)
+	if !ok {
+		return
+	}
+	rel, ok := cleanRel(w, r.URL.Query().Get("path"))
+	if !ok {
+		return
+	}
+	sha := r.URL.Query().Get("sha")
+	if sha == "" {
+		writeErr(w, 400, "sha is required")
+		return
+	}
+	b, err := h.Shadow.FileAt(sha, rel)
+	if err != nil {
+		writeErr(w, 404, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(200)
+	_, _ = w.Write(b)
+}
+
+// restoreFile rolls ONE file back to one checkpoint. SPEC §11: warn when
+// user edits made after the checkpoint would be overwritten (409 unless
+// force). The restore itself is a mutation → checkpointed + diff events.
+func (s *Server) restoreFile(w http.ResponseWriter, r *http.Request) {
+	h, ok := s.shadowFor(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Path  string `json:"path"`
+		SHA   string `json:"sha"`
+		Force bool   `json:"force"`
+	}
+	if err := readJSON(r, &in); err != nil || in.Path == "" || in.SHA == "" {
+		writeErr(w, 400, "path and sha are required")
+		return
+	}
+	rel, ok := cleanRel(w, in.Path)
+	if !ok {
+		return
+	}
+	abs := filepath.Join(h.Cwd, filepath.FromSlash(rel))
+
+	// user-edit detection (SPEC §11 warn-before-overwrite): the file on
+	// disk differs from what the agent's last mutation left there.
+	if !in.Force {
+		if cur, err := os.ReadFile(abs); err == nil {
+			if last, known := h.Writer.LastWritten(abs); known && last != fmt.Sprintf("%x", sha256.Sum256(cur)) {
+				writeErr(w, 409, "user edits since the last checkpoint would be overwritten — retry with force")
+				return
+			}
+		}
+	}
+
+	wk, _ := s.Sup.Worker(r.PathValue("id"))
+	err := h.Writer.Mutate(r.Context(), "restore", fmt.Sprintf("restore %s to %s", rel, in.SHA[:min(8, len(in.SHA))]),
+		[]string{abs}, func(*workspace.Txn) error {
+			return h.Shadow.Restore(in.SHA, []string{rel})
+		})
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if wk != nil {
+		wk.Hub.Publish("file_changed", "", map[string]any{"path": rel, "reason": "restored"})
+	}
+	writeJSON(w, 200, map[string]any{"restored": rel, "sha": in.SHA})
+}
+
 func (s *Server) gitStatus(w http.ResponseWriter, r *http.Request) {
 	row := s.sessionRow(w, r)
 	if row == nil {

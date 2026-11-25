@@ -7,13 +7,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/larsn03/genisys/internal/apiconfig"
 )
 
-var version = "dev"
+var (
+	version = "dev"
+	commit  = "dev"
+	builtBy = "source"
+)
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -28,7 +33,7 @@ func run(args []string) error {
 	}
 	switch args[0] {
 	case "version":
-		fmt.Println("genisys", version)
+		fmt.Printf("genisys %s (%s, %s/%s, %s)\n", version, commit, runtime.GOOS, runtime.GOARCH, builtBy)
 		return nil
 	case "config":
 		return configCmd(args[1:])

@@ -4,6 +4,7 @@
 // in-app preview pane (localhost + allow-list, focus-or-open semantics).
 
 import { Suspense, lazy, useEffect, useState } from "react";
+import { api } from "../api";
 import { useStore } from "../store";
 
 const EditorPane = lazy(() =>
@@ -76,6 +77,7 @@ export function RightPanel() {
       )}
       {tab === "history" && <HistoryTab />}
       {tab === "browser" && <BrowserPane />}
+      <FileHistoryModal />
     </aside>
   );
 }
@@ -175,6 +177,15 @@ function FilesTab() {
               }}
             >
               Copy path
+            </button>
+            <button
+              className="w-full text-left px-3 py-1.5 hover:bg-panel2"
+              onClick={() => {
+                useStore.getState().openHistory(menu.path);
+                setMenu(null);
+              }}
+            >
+              History & restore…
             </button>
             <button
               className="w-full text-left px-3 py-1.5 hover:bg-panel2"
@@ -353,6 +364,121 @@ function BrowserPane() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// SPEC §11: per-file snapshot timeline with preview + restore; 409 from
+// user edits gets an explicit force confirmation.
+function FileHistoryModal() {
+  const path = useStore((s) => s.historyPath);
+  const close = useStore((s) => s.closeHistory);
+  const current = useStore((s) => s.current);
+  const [hist, setHist] = useState<{ sha: string; label: string; when: string }[]>([]);
+  const [sel, setSel] = useState("");
+  const [preview, setPreview] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (!path || !current) return;
+    setHist([]);
+    setSel("");
+    setPreview("");
+    setErr("");
+    void api
+      .fileHistory(current, path)
+      .then((h) => {
+        setHist(h);
+        if (h[0]) {
+          setSel(h[0].sha);
+          void fetch(api.fileAtURL(current, path, h[0].sha))
+            .then((r) => r.text())
+            .then(setPreview)
+            .catch(() => setPreview("(binary or unreadable)"));
+        }
+      })
+      .catch((e) => setErr(String(e)));
+  }, [path, current]);
+
+  if (!path) return null;
+
+  const pick = (sha: string) => {
+    setSel(sha);
+    setPreview("…");
+    void fetch(api.fileAtURL(current!, path, sha))
+      .then((r) => (r.ok ? r.text() : Promise.reject(new RegExp("gone"))))
+      .then(setPreview)
+      .catch(() => setPreview("(binary or unreadable)"));
+  };
+
+  const restore = async (force: boolean) => {
+    if (!current || !sel) return;
+    setBusy(true);
+    setErr("");
+    try {
+      await api.restoreFile(current, path, sel, force);
+      close();
+      void useStore.getState().refreshFiles(useStore.getState().dirPath);
+    } catch (e) {
+      const msg = String(e);
+      if (!force && msg.includes("user edits")) {
+        if (confirm("User edits since the last checkpoint would be overwritten. Restore anyway?"))
+          await restore(true);
+      } else {
+        setErr(msg);
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-6" onClick={close}>
+      <div
+        className="w-full max-w-3xl max-h-[80vh] bg-panel border border-line rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-line">
+          <span className="text-sm text-ink">History —</span>
+          <span className="font-mono text-xs text-mute truncate">{path}</span>
+          <button onClick={close} className="ml-auto text-faint hover:text-ink text-sm">
+            ✕
+          </button>
+        </div>
+        <div className="flex flex-1 min-h-0">
+          <div className="w-72 shrink-0 border-r border-line overflow-y-auto py-1 text-[12px]">
+            {hist.length === 0 && !err && <div className="p-3 text-faint">no snapshots yet</div>}
+            {hist.map((c) => (
+              <button
+                key={c.sha}
+                onClick={() => pick(c.sha)}
+                className={`block w-full text-left px-3 py-2 ${
+                  sel === c.sha ? "bg-panel2 text-ink" : "text-mute hover:bg-panel2/60"
+                }`}
+              >
+                <div className="truncate">{c.label.split("·")[0] || c.label}</div>
+                <div className="text-[10px] text-faint">
+                  {new Date(c.when).toLocaleString()} · {c.sha.slice(0, 7)}
+                </div>
+              </button>
+            ))}
+          </div>
+          <pre className="flex-1 overflow-auto p-3 text-[11px] font-mono text-mute whitespace-pre-wrap">
+            {preview}
+          </pre>
+        </div>
+        {(err || busy) && <div className="px-4 py-2 text-xs text-warn">{err || "restoring…"}</div>}
+        <div className="px-4 py-3 border-t border-line flex justify-end">
+          <button
+            disabled={!sel || busy}
+            onClick={() => void restore(false)}
+            className="text-xs px-3 py-1.5 rounded-lg border border-accent text-accent hover:bg-accent/10 disabled:opacity-40"
+          >
+            ↺ Restore this snapshot
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

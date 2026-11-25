@@ -29,6 +29,30 @@ type World struct {
 	Subagent       func(ctx context.Context, cwd, target string) string // agentic_find runner (SPEC §12); nil = unavailable
 	MCP            *mcp.Manager                                         // MCP servers (SPEC §15); nil = none configured
 	BrowserOrigins []string                                             // browser.allowed_origins (SPEC §5.4)
+	Gen            *Genisys                                             // genisys_tool facade (SPEC §9.8); nil = unavailable
+}
+
+// Genisys is the introspection facade App wires for genisys_tool
+// (SPEC section 9.8). Every action maps to one function; the tool itself
+// never touches storage or config plumbing directly.
+type Genisys struct {
+	ConfigYAML   func() (string, error)
+	ConfigSet    func(path, value string) error
+	Reload       func() error
+	SessionInfo  func() (map[string]any, error)
+	SessionStats func() (map[string]any, error)
+	SessionList  func() ([]map[string]any, error)
+	ModelSet     func(ref string) error
+	Compact      func() (map[string]any, error)
+	Checkpoints  func() ([]map[string]any, error)
+	FileHistory  func(path string) ([]map[string]any, error)
+	FileRestore  func(path, sha string, force bool) error
+	SkillsList   func() ([]map[string]any, error)
+	SkillInstall func(url, content string) (string, error)
+	SkillRemove  func(name string) error
+	MCPStatus    func() []map[string]any
+	WebProbe     func() (map[string]any, error)
+	Models       func() []map[string]any
 }
 
 // Access resolves a tool path and enforces the grant table (SPEC §10.2).

@@ -1,15 +1,14 @@
 # Genisys — build orchestration (docs/IMPLEMENTATION.md P0-1)
 GO      ?= go
 BIN     := genisys
-LDFLAGS := -s -w -X main.version=$(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
+LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 DISTOS  := linux/amd64 linux/arm64 darwin/arm64 windows/amd64
 
-.PHONY: all build test testrace lint fmt vet ui embed-check dist deps-audit clean
+.PHONY: all build test testrace lint fmt vet ui embed-check deps-audit clean
 
 all: build
-
-ui: ## build the web UI (requires node)
-	cd ui && npm install --no-audit --no-fund && npm run build
 
 e2e: ## browser e2e against serve + mock endpoint (needs node + chromium)
 	CGO_ENABLED=0 go build -o dist/genisys ./cmd/genisys
@@ -40,14 +39,27 @@ ui:
 embed-check:
 	@test -d ui/dist && echo "ui/dist present" || echo "ui/dist absent (ok until P3)"
 
-dist:
+dist-tar:
 	@mkdir -p dist
 	@for t in $(DISTOS); do \
 		os=$${t%/*}; arch=$${t#*/}; ext=""; [ "$$os" = windows ] && ext=.exe; \
 		echo "building $$t"; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build -ldflags "$(LDFLAGS)" -o dist/$(BIN)-$$os-$$arch$$ext ./cmd/genisys || exit 1; \
 	done
-	@cd dist && sha256sum * > checksums.txt 2>/dev/null || shasum -a 256 * > checksums.txt
+	@cd dist && for f in genisys-*; do \
+	  case "$$f" in *.tar.gz|checksums.txt) continue;; esac; \
+	  tar czf "$${f%.exe}.tar.gz" "$$f" && rm -f "$$f"; \
+	done
+	@cd dist && (sha256sum * 2>/dev/null || shasum -a 256 *) > checksums.txt
+
+dist-appimage:
+	@mkdir -p dist
+	VERSION=$(VERSION) COMMIT=$(COMMIT) ./scripts/appimage.sh
+
+# release flow (SPEC §19.1): tag → make dist → GitHub Release
+dist: dist-tar dist-appimage
+
+.PHONY: dist dist-tar dist-appimage
 
 deps-audit:
 	@n=$$(grep -c '^\t' <(awk '/^require \(/{f=1;next}/^\)/{f=0}f&&!/\/\/ indirect/' go.mod) 2>/dev/null || echo 0); \
