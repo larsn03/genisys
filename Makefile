@@ -18,10 +18,14 @@ build:
 	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/genisys
 
 # native desktop window (SPEC Q1): needs CGO + GTK4/WebKitGTK dev headers
-#   Fedora: sudo dnf install gtk4-devel webkitgtk6.0-devel
+#   Fedora: sudo dnf install gtk4-devel webkitgtk6.0-devel gcc
 #   Debian: sudo apt install libgtk-4-dev libwebkitgtk-6.0-dev
+# Homebrew's pkg-config (first on PATH on this box) does not search the
+# distro's /usr/lib64/pkgconfig — add it so system webkit/gtk .pc files
+# are found regardless of which pkg-config wins.
+SYSPC := $(shell test -d /usr/lib64/pkgconfig && echo :/usr/lib64/pkgconfig)
 window:
-	CGO_ENABLED=1 $(GO) build -tags wails -ldflags "$(LDFLAGS)" -o genisys-window ./cmd/genisys
+	CGO_ENABLED=1 PKG_CONFIG_PATH="$(PKG_CONFIG_PATH)$(SYSPC)" $(GO) build -tags wails -ldflags "$(LDFLAGS)" -o genisys-window ./cmd/genisys
 
 test:
 	$(GO) test ./...
