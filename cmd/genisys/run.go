@@ -29,6 +29,7 @@ import (
 
 type runOpts struct {
 	cfgPath, dbFlag, modelRef, cwd, toolsMode, resume string
+	prompt                                            string // one-shot mode
 	quiet, newSession                                 bool
 }
 
@@ -44,6 +45,7 @@ func runCmd(args []string) error {
 	fs.BoolVar(&o.newSession, "new", false, "start a fresh session (default)")
 	fs.BoolVar(&o.quiet, "quiet", false, "hide harness progress lines")
 	fs.Parse(args)
+	o.prompt = strings.TrimSpace(strings.Join(fs.Args(), " "))
 	return runREPL(o)
 }
 
@@ -210,6 +212,15 @@ func runREPL(o runOpts) error {
 				fmt.Fprintln(os.Stderr, "error:", err)
 			}
 		}(text)
+	}
+
+	// one-shot: `genisys run "prompt"` runs exactly one turn and exits
+	// (acceptance-corpus automation, scripts).
+	if o.prompt != "" {
+		send(o.prompt, agent.ModeQueue)
+		wg.Wait()
+		_ = a.DB.SetSessionStatus(row.ID, store.StatusIdle)
+		return nil
 	}
 
 repl:
