@@ -1000,6 +1000,24 @@ func TestForkMidRun(t *testing.T) {
 	sid := e.newSession(t)
 	e.mustJSON(t, "POST", "/api/sessions/"+sid+"/prompt", map[string]any{"text": "slow one"}, nil)
 
+	// fork once the user turn is persisted (fork snapshots persisted
+	// state; the prompt POST returns before the worker writes it)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var ms []map[string]any
+		e.mustJSON(t, "GET", "/api/sessions/"+sid+"/messages", nil, &ms)
+		var users int
+		for _, m := range ms {
+			if m["role"] == "user" {
+				users++
+			}
+		}
+		if users >= 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
 	// while still running: fork
 	var forked struct {
 		ID string `json:"id"`
