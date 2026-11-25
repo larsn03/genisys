@@ -230,12 +230,22 @@ func TestInterruptKillsToolAndHonorsNewInstruction(t *testing.T) {
 		sseText("redirected"))
 	s := newSession(t, m, nil, "native", 8)
 	s.d.Cwd = t.TempDir() // isolated: this test writes into the workspace
+	dir := s.d.Cwd
 	var once sync.Once
 	s.d.Events = events.SinkFunc(func(e events.Event) {
 		if e.Type == events.ToolStarted {
 			once.Do(func() {
 				go func() {
-					time.Sleep(400 * time.Millisecond) // let touch run, sleep start
+					// deterministic: interrupt once the first side effect
+					// is observable (fixed sleeps flake on loaded CI
+					// runners under -race); sleep 20 keeps the tool alive
+					deadline := time.Now().Add(15 * time.Second)
+					for time.Now().Before(deadline) {
+						if _, err := os.Stat(filepath.Join(dir, "interrupted.marker")); err == nil {
+							break
+						}
+						time.Sleep(25 * time.Millisecond)
+					}
 					s.Interjections().Push("stop, do something else", ModeInterrupt)
 				}()
 			})
