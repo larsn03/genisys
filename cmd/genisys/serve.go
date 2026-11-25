@@ -66,7 +66,20 @@ func runServer(o serverOpts, open func(url string) <-chan struct{}) error {
 	}
 	httpSrv := &http.Server{Addr: o.addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 
-	url := fmt.Sprintf("http://%s/?token=%s", o.addr, srv.Token)
+	// desktop UX: a taken port must never kill the app — fall back to an
+	// ephemeral port (two windows side by side just work)
+	ln, err := net.Listen("tcp", o.addr)
+	if err != nil {
+		if !errors.Is(err, syscall.EADDRINUSE) {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "warning: %s already in use — falling back to 127.0.0.1:0\n", o.addr)
+		ln, err = net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return err
+		}
+	}
+	url := fmt.Sprintf("http://%s/?token=%s", ln.Addr().String(), srv.Token)
 	fmt.Printf("Genisys %s serving %s\n", version, url)
 	fmt.Println("press ctrl-c to stop")
 
@@ -78,7 +91,7 @@ func runServer(o serverOpts, open func(url string) <-chan struct{}) error {
 	ctx, stop := signalContext()
 	defer stop()
 	errCh := make(chan error, 1)
-	go func() { errCh <- httpSrv.ListenAndServe() }()
+	go func() { errCh <- httpSrv.Serve(ln) }()
 	select {
 	case err := <-errCh:
 		if !errors.Is(err, http.ErrServerClosed) {

@@ -2,6 +2,7 @@
 /dist/
 /squashfs-root/
 /tools/
+/genisys-window
 *.exe
 
 # Frontend (IMPL §2: ui/ builds into ui/dist, embedded via go:embed).
