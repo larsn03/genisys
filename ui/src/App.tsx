@@ -37,6 +37,7 @@ export default function App() {
 
   useEffect(() => {
     void loadModels();
+    void useStore.getState().applyOpenTarget();
     void refresh();
     void refreshProjects();
     const t = setInterval(() => void useStore.getState().refreshSessions(), 5000);

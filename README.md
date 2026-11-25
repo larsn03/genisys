@@ -40,7 +40,7 @@ the signature **interjection** model — you can steer or queue messages
 
 ## Install
 
-### Linux (primary target — one file, nothing else)
+### Linux (primary target — one file)
 
 Grab the AppImage from the
 [releases page](https://github.com/larsn03/genisys/releases):
@@ -50,10 +50,11 @@ chmod +x Genisys-*-x86_64.appimage
 ./Genisys-*-x86_64.appimage
 ```
 
-That starts Genisys, prints a tokenized URL, and opens your browser. The
-AppImage contains *everything*: the server, the web UI, and a sandboxed
-CPython for document generation. It runs on any glibc distro (Ubuntu LTS,
-Fedora, Arch) with no other installs.
+A **native Genisys window** opens — a real desktop app, no browser
+required. The AppImage bundles the server, the UI, and a sandboxed
+CPython for document generation; it uses the system's GTK4/WebKitGTK
+(standard on GNOME-based Fedora, Ubuntu, Debian). On a machine without
+them it degrades gracefully to a browser tab instead of failing.
 
 ### Any OS (raw binary)
 
@@ -61,7 +62,8 @@ Binaries and tarballs for `linux/amd64`, `linux/arm64`, `darwin/arm64` and
 `windows/amd64` are attached to each release:
 
 ```bash
-./genisys serve        # starts the server and opens the browser
+./genisys              # native window (window builds) / browser tab (portable builds)
+./genisys serve        # headless server only — for remote access & scripting
 ```
 
 macOS/Windows installers are planned; the binaries work fine today.
@@ -249,9 +251,9 @@ config through `genisys_tool`.
 One binary, several faces:
 
 ```bash
-genisys serve                     # web UI in your browser (default command)
-genisys window                    # native desktop window (needs a
-                                  # `make window` build: CGO + GTK4/WebKitGTK)
+genisys                           # the desktop app: native window
+genisys window                    # …same thing, explicitly
+genisys serve                     # headless server (browser UI, remote access)
 genisys serve --addr 0.0.0.0:8710 # expose on your LAN (token still required)
 genisys serve --no-open           # don't auto-open the browser
 
@@ -306,14 +308,12 @@ checkpoints). Deleting a session deletes its data.
 ## FAQ
 
 **Is it a desktop app or a website?**
-Both flavours from one codebase. The default AppImage installs and
-launches like a desktop app and renders the UI in a browser tab served
-from localhost — zero system dependencies. `genisys window` opens a
-**real native window** instead (Wails v3: GTK4/WebKitGTK on Linux,
-WKWebView on macOS, WebView2 on Windows); that build needs CGO and the
-webkit dev headers (`make window`). The browser build stays the primary
-artifact (SPEC G13); the window build is a release-candidate companion
-(SPEC Q1).
+A desktop app: `genisys` (no arguments) opens a native window (Wails v3 —
+GTK4/WebKitGTK on Linux, WKWebView on macOS, WebView2 on Windows). The
+HTTP server still runs underneath (that's how the UI and the agent talk,
+and what makes remote use possible), but you never see a browser.
+`genisys serve` remains for headless/remote setups, and CGO-free
+portable builds fall back to the browser tab automatically.
 
 **Does anything leave my machine?**
 Only what your configured endpoint receives. Web search defaults to your
@@ -340,8 +340,8 @@ is committed so plain `go build` works without Node).
 
 ```bash
 make ui        # node build → ui/dist (embedded into the binary via go:embed)
-make build     # CGO off → ./genisys
-make window    # native desktop window → ./genisys-window (needs gtk4-devel + webkitgtk6.0-devel)
+make window    # native desktop app → ./genisys-window (needs gtk4-devel + webkitgtk6.0-devel)
+make build     # portable CGO-free build → ./genisys (browser flow, headless)
 make testrace  # full race test suite
 make e2e       # Playwright browser tests against a scripted mock endpoint
 make dist      # 4-OS tarballs + AppImage (needs appimagetool)

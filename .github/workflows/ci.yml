@@ -103,6 +103,8 @@ jobs:
         with: { node-version: 22, cache: npm, cache-dependency-path: ui/package-lock.json }
       - name: build UI (embedded in the binary)
         run: cd ui && npm ci && npm run build
+      - name: install packaging deps (AppImage is the desktop build now)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq desktop-file-utils squashfs-tools libgtk-4-dev libwebkitgtk-6.0-dev
       - name: install appimagetool
         run: |
           curl -sL -o /tmp/at.AppImage https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage

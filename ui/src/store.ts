@@ -90,6 +90,7 @@ interface State {
   closeBrowser: () => void;
   openPreview: (path: string) => void;
   applyTheme: () => void;
+  applyOpenTarget: () => Promise<void>;
   loadSkills: () => void;
   settingsOpen: boolean;
   setSettingsOpen: (v: boolean) => void;
@@ -444,6 +445,20 @@ export const useStore = create<State>((set, get) => ({
         document.documentElement.dataset.theme = eff;
       })
       .catch(() => {});
+  },
+  // `genisys <dir|file>` deep link: ?project=<id>&file=<rel>
+  async applyOpenTarget() {
+    const p = new URLSearchParams(location.search);
+    const projectId = p.get("project");
+    if (!projectId) return;
+    await Promise.all([get().refreshProjects(), get().refreshSessions()]);
+    const existing = get().sessions.filter(
+      (s) => s.project_id === projectId && s.status !== "archived",
+    );
+    if (existing.length) await get().select(existing[0].id);
+    else await get().createSession(projectId);
+    const file = p.get("file");
+    if (file) await get().openFile(file);
   },
   loadSkills: () => {
     api

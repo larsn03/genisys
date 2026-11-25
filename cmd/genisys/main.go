@@ -29,7 +29,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return usage()
+		return windowCmd(nil) // the desktop app: double-click / ./genisys
 	}
 	switch args[0] {
 	case "version":
@@ -50,6 +50,16 @@ func run(args []string) error {
 	case "help", "-h", "--help":
 		return usage()
 	default:
+		// `genisys <dir|file>` — open it as a project in the window
+		if cwd, file, err := openArgs(args[0]); err == nil {
+			rest := []string{"--cwd", cwd}
+			if file != "" {
+				rest = append(rest, "--file", file)
+			}
+			return windowCmd(append(rest, args[1:]...))
+		} else if _, statErr := os.Stat(args[0]); statErr == nil {
+			return fmt.Errorf("open %s: %w", args[0], err)
+		}
 		return fmt.Errorf("unknown command %q", args[0])
 	}
 }
@@ -58,14 +68,17 @@ func usage() error {
 	fmt.Fprint(os.Stderr, `genisys — agent harness for OpenAI-compatible endpoints (SPEC §18)
 
 usage:
+  genisys                       open the desktop window (default; falls
+                                back to a browser tab in CGO-free builds)
+  genisys <dir|file>            open a folder (or a file's project) as a project
   genisys config validate [--config <path>]   lint all YAML levels (file:line)
   genisys config show     [--config <path>]   print effective app config
   genisys run [--config <path>] [--model ep/id] [--cwd dir] [--resume [id]]   agent REPL
   genisys revert [--list] [--step <id>] [--session <id>]   roll back a step's files
   genisys search test              probe the configured SearXNG instance
-  genisys window        native desktop window (needs -tags wails build)
+  genisys window [--addr host:port]   native desktop window explicitly
+  genisys serve  [--addr host:port]   headless server (API + WS + UI)
   genisys version
-  genisys serve [--addr host:port]   web server (API + WS + UI)
 `)
 	return nil
 }

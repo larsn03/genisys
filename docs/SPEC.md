@@ -73,8 +73,8 @@
 | G9 | Local-first: all conversation state, files, and transcripts stay on the user's machine; only prompts go to the configured endpoint | Offline endpoint ⇒ UI still browsable, sessions resumable |
 | G10 | **Skills** (Agent Skills / `SKILL.md` spec) with `@`-mention palette | A Claude-Code-authored skill runs unmodified |
 | G11 | **User-controlled interjection**: a prompt sent while the agent is working lets the user choose *interrupt now* or *must read it later* (§7.4) | Both modes demonstrably work: interrupt kills the in-flight action cleanly; queue is delivered at the next boundary and cannot be skipped |
-| G12 | **Go implementation, single static binary** (backend + embedded UI + embedded sandbox runtime; no external runtime deps) | `go build ./cmd/genisys` yields one executable that runs the whole app |
-| G13 | **Primary deployment: Linux AppImage.** The single binary (§19) ships as an AppImage with desktop entry + icon; it is the reference release channel. macOS and Windows releases are **planned for the future** (same binary, platform shells TBD) | `Genisys.appimage` downloads, `chmod +x`, runs on a clean x86_64 Linux distro (Ubuntu LTS + Fedora + Arch smoke-tested) with zero other installs; win/mac cross-compile stays green in CI so future releases are a packaging task, not a code task |
+| G12 | **Go implementation, single binary** (backend + embedded UI + embedded sandbox runtime). Core packages stay CGO-free (`go build ./cmd/genisys` → portable/headless build); the **primary desktop artifact** adds the Wails window via `-tags wails` (CGO) | both builds produce one executable that runs the whole app; the CGO-free build auto-falls back to the browser flow |
+| G13 | **Primary deployment: Linux AppImage running the native window** (`genisys` with no args → Wails window; SPEC Q1). Ships with desktop entry + icon. Uses the host's GTK4/WebKitGTK 6.0 (standard on GNOME-based Fedora/Ubuntu/Debian) and degrades to the browser tab when absent. CGO-free tarballs remain for headless/portable use. macOS and Windows releases are **planned for the future** | `Genisys.appimage` downloads, `chmod +x`, opens a native window on Fedora + Ubuntu LTS; win/mac cross-compile (CGO-free target) stays green in CI |
 
 ### 1.2 Non-Goals (v1)
 
@@ -876,7 +876,7 @@ genisys/
 
 ### 19.1 Packaging & Distribution (normative)
 
-- **Primary artifact (v1): Linux AppImage** (`Genisys-<version>-x86_64.appimage`). The single static binary + embedded UI/sandbox assets (§19, G12) is packed with a `.desktop` entry (`StartupWMClass=genisys`), icon, and launcher that starts `genisys serve` and opens the default browser. No system dependencies; runs on glibc distros (Ubuntu LTS, Fedora, Arch smoke-tested in CI); static linking keeps it distro-agnostic. Users on other layouts use the raw binary or tarball.
+- **Primary artifact: Linux AppImage, native window** (`Genisys-<version>-x86_64.appimage`). The binary + embedded UI/sandbox assets (§19, G12) is packed with a `.desktop` entry (`StartupWMClass=genisys`), icon, and launcher that runs `genisys` (no args) → **Wails v3 native window** (GTK4/WebKitGTK 6.0 from the host; graceful browser-tab fallback where absent). Closing the window stops the server. CGO-free tarballs (browser flow, headless `serve`) ship alongside; win/mac cross-compiles of the CGO-free target stay green.
 - **macOS and Windows: planned, not shipped in v1.** The Go code cross-compiles for `darwin/arm64`, `darwin/amd64`, and `windows/amd64` and CI keeps those builds green (§25 Test strategy), so a future release is a packaging exercise (`.dmg` / `.msi` or portable `.exe`, browser-open behavior already identical) rather than a port. Platform-specific polish (menu-bar presence, keychain, file associations) is deliberately deferred.
 - **Versioning:** `genisys version` prints semver + git SHA (ldflags stamp); AppImage filename carries both. Release flow: tag → `make dist` → GitHub Release (AppImage + checksums first; tarballs for all GOOS/GOARCH as raw artifacts).
 - **Update path (future):** AppImage `--appimage-self-update` or an in-app "new version" banner checking GitHub releases; out of scope for v1.
@@ -998,7 +998,7 @@ Fork, side-by-side panes, background badges, compaction, checkpoint browser, set
 
 | # | Question | Leaning |
 |---|---|---|
-| Q1 | Ship as browser-based local app (v1) vs. Tauri wrapper from day one? | **Resolved:** web-first core stays primary (AppImage, G13, zero deps) **and** an optional native shell shipped as `genisys window` behind `-tags wails` (Wails v3: GTK4/WebKitGTK-6.0 default, `gtk3` tag fallback). Same server, same UI — only the chrome differs. Window builds need CGO + webkit headers, so they are companion artifacts, never the primary one |
+| Q1 | Ship as browser-based local app (v1) vs. Tauri wrapper from day one? | **Resolved (2026-11-25):** the **native window is the product**. `genisys` (no args) and the AppImage open a Wails v3 window (GTK4/WebKitGTK-6.0 default, `gtk3` tag fallback; CGO). The embedded HTTP server remains the internal architecture (UI↔agent transport, remote access via `genisys serve`), and CGO-free builds auto-degrade to the browser tab. Browser-first was the v0 path; desktop-first is the shipped default |
 | Q2 | Which endpoint(s) to develop against first? | User's remote OpenAI-compatible server (URL/model TBD) |
 | Q3 | Voice input (Voxtral/local whisper) timing | Post-M5 extension; UI mic button stays disabled |
 | Q4 | Multi-endpoint load balancing / auto-fallback model | Post-v1 |

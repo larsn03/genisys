@@ -13,11 +13,13 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,6 +31,7 @@ import (
 
 type serverOpts struct {
 	cfgPath, dbFlag, addr string
+	openDir, openFile     string // `genisys <dir|file>`: project to focus + file to edit
 }
 
 func serveCmd(args []string) error {
@@ -80,6 +83,9 @@ func runServer(o serverOpts, open func(url string) <-chan struct{}) error {
 		}
 	}
 	url := fmt.Sprintf("http://%s/?token=%s", ln.Addr().String(), srv.Token)
+	if extra := openURLParams(a, o.openDir, o.openFile); extra != "" {
+		url += extra
+	}
 	fmt.Printf("Genisys %s serving %s\n", version, url)
 	fmt.Println("press ctrl-c to stop")
 
@@ -120,6 +126,35 @@ func openBrowser(url string) {
 	if err := cmd.Start(); err != nil {
 		log.Println("could not open browser:", err)
 	}
+}
+
+// openURLParams turns `genisys <dir|file>` into UI deep-link params:
+// the project bound to the dir (created on demand — ProjectFor) and the
+// file relative to the workspace root. Empty when nothing to open.
+func openURLParams(a *app.App, dir, file string) string {
+	if dir == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(apiconfig.ExpandPath(dir))
+	if err != nil {
+		return ""
+	}
+	if fi, err := os.Stat(abs); err == nil && !fi.IsDir() {
+		abs = filepath.Dir(abs)
+	}
+	proj, err := a.ProjectFor(abs)
+	if err != nil {
+		return ""
+	}
+	extra := "&project=" + proj.ID
+	if file != "" {
+		if fabs, err := filepath.Abs(apiconfig.ExpandPath(file)); err == nil {
+			if rel, err := filepath.Rel(proj.WorkspacePath, fabs); err == nil && !strings.HasPrefix(rel, "..") {
+				extra += "&file=" + url.QueryEscape(rel)
+			}
+		}
+	}
+	return extra
 }
 
 // signalContext: ctrl-c / SIGTERM aware context.
