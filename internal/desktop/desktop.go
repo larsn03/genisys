@@ -14,53 +14,30 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
+// Controls are the native window actions Run publishes so the SPA can
+// draw its own titlebar. They are plain funcs (no import cycle: the API
+// layer defines the interface, cmd/genisys adapts these to it). Run
+// populates the struct before showing the window.
+type Controls struct {
+	Minimize       func()
+	ToggleMaximize func()
+	IsMaximized    func() bool
+	Close          func()
+}
+
 // Options configures the main window.
 type Options struct {
 	Title string
 	URL   string // full server URL incl. ?token=
-}
-
-// Shell is bound into the webview so the SPA can draw its own window
-// chrome (the window is Frameless — SPEC G12: the app owns its chrome).
-// The frontend discovers it by feature-scanning window.go (see
-// ui/src/shell.ts), so renaming this type or moving packages is safe.
-type Shell struct{ win *application.WebviewWindow }
-
-// Minimize iconifies the window.
-func (s *Shell) Minimize() {
-	if s.win != nil {
-		s.win.Minimise()
-	}
-}
-
-// ToggleMaximize maximises or restores the window.
-func (s *Shell) ToggleMaximize() {
-	if s.win != nil {
-		s.win.ToggleMaximise()
-	}
-}
-
-// IsMaximized reports the current maximised state (titlebar icon sync).
-func (s *Shell) IsMaximized() bool {
-	return s.win != nil && s.win.IsMaximised()
-}
-
-// Close closes the window; last window closed quits the app (server
-// shutdown hooks run, so the transcript is flushed).
-func (s *Shell) Close() {
-	if s.win != nil {
-		s.win.Close()
-	}
+	Ctl   *Controls
 }
 
 // Run opens the native window and blocks until the app quits (last
 // window closed → Wails quits by default on Linux/Windows/macOS).
 func Run(o Options) error {
-	shell := &Shell{}
 	app := application.New(application.Options{
 		Name:        "Genisys",
 		Description: "AI agent for OpenAI-compatible endpoints",
-		Services:    []application.Service{application.NewService(shell)},
 		Linux: application.LinuxOptions{
 			ProgramName: "genisys",
 		},
@@ -80,7 +57,12 @@ func Run(o Options) error {
 		URL:              o.URL,
 		BackgroundColour: application.NewRGBA(19, 20, 25, 255), // match --color-bg (dark)
 	})
-	shell.win = win
+	if o.Ctl != nil {
+		o.Ctl.Minimize = func() { win.Minimise() }
+		o.Ctl.ToggleMaximize = func() { win.ToggleMaximise() }
+		o.Ctl.IsMaximized = func() bool { return win.IsMaximised() }
+		o.Ctl.Close = func() { win.Close() }
+	}
 	win.Center() // Center returns nothing (v3 API)
 	win.Show()
 

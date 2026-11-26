@@ -11,9 +11,39 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/larsn03/genisys/internal/api"
 	"github.com/larsn03/genisys/internal/apiconfig"
 	"github.com/larsn03/genisys/internal/desktop"
 )
+
+// shellCtl adapts desktop.Controls (filled inside desktop.Run) to
+// api.WindowController. Nil-safe: requests arriving before the window
+// exists are no-ops.
+type shellCtl struct{ c *desktop.Controls }
+
+func (s shellCtl) Minimize() {
+	if s.c.Minimize != nil {
+		s.c.Minimize()
+	}
+}
+
+func (s shellCtl) ToggleMaximize() {
+	if s.c.ToggleMaximize != nil {
+		s.c.ToggleMaximize()
+	}
+}
+
+func (s shellCtl) IsMaximized() bool {
+	return s.c.IsMaximized != nil && s.c.IsMaximized()
+}
+
+var _ api.WindowController = shellCtl{}
+
+func (s shellCtl) Close() {
+	if s.c.Close != nil {
+		s.c.Close()
+	}
+}
 
 // openArgs maps `genisys <path>` to (cwd, file): a directory opens as a
 // project; a file opens its containing project with the file focused.
@@ -47,9 +77,11 @@ func windowCmd(args []string) error {
 	// down. On failure (stub build / no webview) we degrade to the
 	// browser flow and never signal quit.
 	quit := make(chan struct{})
+	ctl := &desktop.Controls{}
+	o.winCtl = shellCtl{c: ctl}
 	return runServer(o, func(url string) <-chan struct{} {
 		go func() {
-			if err := desktop.Run(desktop.Options{Title: "Genisys", URL: url}); err != nil {
+			if err := desktop.Run(desktop.Options{Title: "Genisys", URL: url, Ctl: ctl}); err != nil {
 				log.Println("native window unavailable:", err)
 				openBrowser(url)
 				return

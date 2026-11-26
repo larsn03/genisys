@@ -1,43 +1,46 @@
 // Custom window chrome for the frameless native window (SPEC G12: the
-// app owns its chrome). Renders only when the Wails shell service is
-// present (i.e. inside `genisys` proper); browser tabs skip it entirely.
-// Dragging: Wails runtime honours `--wails-draggable: drag` (see CSS);
-// double-click maximises; edge-resize is handled by the runtime itself.
+// app owns its chrome). The server exposes /api/window/* only when the
+// Wails shell is live; a 404 means browser/headless mode and the bar
+// hides itself. Dragging + edge-resize are handled by the _wails
+// message shim (windrag.ts); double-click on the bar maximises via the
+// native wails:drag:doubleclick message.
 
-import { useEffect, useState } from "react";
-import { findShell, shellCall, type ShellAPI } from "../shell";
+import { useCallback, useEffect, useState } from "react";
+import { windowAction, windowState } from "../api";
 
 export function TitleBar() {
-  const [shell] = useState<ShellAPI | null>(() => findShell());
-  const [max, setMax] = useState(false);
+  const [shell, setShell] = useState<{ maximized: boolean } | null | undefined>(
+    undefined,
+  );
+
+  const sync = useCallback(() => {
+    windowState()
+      .then(setShell)
+      .catch(() => setShell(null));
+  }, []);
 
   useEffect(() => {
-    if (!shell) return;
-    const sync = () =>
-      shellCall(shell.IsMaximized()).then((v) => setMax(v === true));
-    void sync();
+    sync();
+    // maximise/restore fires a window resize → keep the icon in sync
     window.addEventListener("resize", sync);
     return () => window.removeEventListener("resize", sync);
-  }, [shell]);
+  }, [sync]);
 
   if (!shell) return null;
-
-  const act = (fn: () => unknown) => (e: React.MouseEvent) => {
-    e.stopPropagation();
-    void shellCall(fn());
-  };
+  const max = shell.maximized;
 
   return (
-    <div
-      className="titlebar shrink-0 flex items-center text-[12px] text-mute select-none"
-      onDoubleClick={() => void shellCall(shell.ToggleMaximize())}
-    >
+    <div className="titlebar shrink-0 flex items-center text-[12px] text-mute select-none">
       <span className="pl-3.5 pr-1 text-[15px] leading-none">⚡</span>
       <span className="font-semibold text-[13px] text-ink tracking-tight">
         Genisys
       </span>
       <div className="flex-1 h-full" />
-      <button className="tb-btn" title="Minimize" onClick={act(shell.Minimize)}>
+      <button
+        className="tb-btn"
+        title="Minimize"
+        onClick={() => void windowAction("minimize")}
+      >
         <svg width="14" height="14" viewBox="0 0 16 16">
           <path d="M4 12h8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
         </svg>
@@ -45,7 +48,7 @@ export function TitleBar() {
       <button
         className="tb-btn"
         title={max ? "Restore" : "Maximize"}
-        onClick={act(shell.ToggleMaximize)}
+        onClick={() => void windowAction("toggle-maximize")}
       >
         {max ? (
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
@@ -58,7 +61,11 @@ export function TitleBar() {
           </svg>
         )}
       </button>
-      <button className="tb-btn tb-close" title="Close" onClick={act(shell.Close)}>
+      <button
+        className="tb-btn tb-close"
+        title="Close"
+        onClick={() => void windowAction("close")}
+      >
         <svg width="14" height="14" viewBox="0 0 16 16">
           <path d="M4.5 4.5l7 7m0-7l-7 7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
         </svg>

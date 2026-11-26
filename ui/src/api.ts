@@ -16,6 +16,24 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
   return r.status === 204 ? (undefined as T) : ((await r.json()) as T);
 }
 
+// Native window chrome: 404 means "no shell" (browser/headless mode).
+export async function windowState(): Promise<{ maximized: boolean } | null> {
+  const r = await fetch("/api/window/state", {
+    headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
+  });
+  return r.ok ? ((await r.json()) as { maximized: boolean }) : null;
+}
+export async function windowAction(a: "minimize" | "toggle-maximize" | "close") {
+  try {
+    await fetch(`/api/window/${a}`, {
+      method: "POST",
+      headers: TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {},
+    });
+  } catch {
+    /* window dying mid-fetch is fine */
+  }
+}
+
 export const api = {
   sessions: () => req<import("./types").SessionRow[]>("GET", "/api/sessions"),
   projects: () =>

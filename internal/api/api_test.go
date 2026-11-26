@@ -1060,3 +1060,51 @@ func TestForkMidRun(t *testing.T) {
 	e.waitIdle(t, forked.ID)
 	e.mustJSON(t, "GET", "/api/sessions/"+sid+"/messages", nil, &msgs)
 }
+
+// --- native window chrome ------------------------------------------------------
+
+type fakeWin struct {
+	min, max, closed int
+	maximized        bool
+}
+
+func (f *fakeWin) Minimize()         { f.min++ }
+func (f *fakeWin) ToggleMaximize()   { f.max++; f.maximized = !f.maximized }
+func (f *fakeWin) IsMaximized() bool { return f.maximized }
+func (f *fakeWin) Close()            { f.closed++ }
+
+func TestWindowRoutes(t *testing.T) {
+	e := newEnv(t, []string{sseText("x")}, 0)
+
+	// headless/browser mode: no shell wired → all 404
+	if code, _ := e.do(t, "GET", "/api/window/state", nil); code != 404 {
+		t.Fatalf("state without shell: %d", code)
+	}
+	if code, _ := e.do(t, "POST", "/api/window/close", nil); code != 404 {
+		t.Fatalf("close without shell: %d", code)
+	}
+
+	f := &fakeWin{}
+	e.srv.WinCtl = f
+
+	code, body := e.do(t, "GET", "/api/window/state", nil)
+	if code != 200 || !strings.Contains(string(body), `"maximized":false`) {
+		t.Fatalf("state: %d %s", code, body)
+	}
+	if code, _ := e.do(t, "POST", "/api/window/minimize", nil); code != 204 {
+		t.Fatalf("minimize: %d", code)
+	}
+	if code, _ := e.do(t, "POST", "/api/window/toggle-maximize", nil); code != 204 {
+		t.Fatalf("toggle: %d", code)
+	}
+	_, body = e.do(t, "GET", "/api/window/state", nil)
+	if !strings.Contains(string(body), `"maximized":true`) {
+		t.Fatalf("state after toggle: %s", body)
+	}
+	if code, _ := e.do(t, "POST", "/api/window/close", nil); code != 204 {
+		t.Fatalf("close: %d", code)
+	}
+	if f.min != 1 || f.max != 1 || f.closed != 1 {
+		t.Fatalf("calls: min=%d max=%d closed=%d", f.min, f.max, f.closed)
+	}
+}

@@ -4,10 +4,20 @@ package desktop
 
 import "fmt"
 
+// Controls are the native window actions (see desktop.go); the stub
+// never fills them.
+type Controls struct {
+	Minimize       func()
+	ToggleMaximize func()
+	IsMaximized    func() bool
+	Close          func()
+}
+
 // Options configures the main window (see desktop.go).
 type Options struct {
 	Title string
 	URL   string
+	Ctl   *Controls
 }
 
 // ErrNotBuilt is returned by Run in binaries compiled without the

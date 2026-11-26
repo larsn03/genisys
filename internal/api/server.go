@@ -20,11 +20,22 @@ import (
 )
 
 // Server bundles app + supervisor + auth.
+// WindowController exposes native window actions to the SPA's custom
+// titlebar (frameless desktop build). Wired by cmd/genisys when the
+// Wails shell is live; nil in headless/browser mode → routes 404.
+type WindowController interface {
+	Minimize()
+	ToggleMaximize()
+	IsMaximized() bool
+	Close()
+}
+
 type Server struct {
 	App        *app.App
 	Sup        *supervisor.Supervisor
 	Token      string
 	ConfigPath string
+	WinCtl     WindowController
 	ui         fs.FS
 	log        *log.Logger
 	mux        *http.ServeMux

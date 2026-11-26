@@ -37,6 +37,40 @@ func (s *Server) routes() {
 		writeJSON(w, 200, map[string]string{"name": "genisys", "version": Version})
 	})
 	m.HandleFunc("GET /api/models", s.listModels)
+
+	// native window chrome (frameless desktop build only)
+	notShell := func(w http.ResponseWriter) { http.Error(w, "no native window", 404) }
+	m.HandleFunc("GET /api/window/state", func(w http.ResponseWriter, _ *http.Request) {
+		if s.WinCtl == nil {
+			notShell(w)
+			return
+		}
+		writeJSON(w, 200, map[string]bool{"maximized": s.WinCtl.IsMaximized()})
+	})
+	m.HandleFunc("POST /api/window/minimize", func(w http.ResponseWriter, _ *http.Request) {
+		if s.WinCtl == nil {
+			notShell(w)
+			return
+		}
+		s.WinCtl.Minimize()
+		w.WriteHeader(204)
+	})
+	m.HandleFunc("POST /api/window/toggle-maximize", func(w http.ResponseWriter, _ *http.Request) {
+		if s.WinCtl == nil {
+			notShell(w)
+			return
+		}
+		s.WinCtl.ToggleMaximize()
+		w.WriteHeader(204)
+	})
+	m.HandleFunc("POST /api/window/close", func(w http.ResponseWriter, _ *http.Request) {
+		if s.WinCtl == nil {
+			notShell(w)
+			return
+		}
+		s.WinCtl.Close()
+		w.WriteHeader(204)
+	})
 	m.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{
 			"running": s.Sup.RunningSessions(), "queued": s.Sup.Queued(), "cap": s.Sup.Cap,

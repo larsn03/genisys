@@ -32,6 +32,7 @@ import (
 type serverOpts struct {
 	cfgPath, dbFlag, addr string
 	openDir, openFile     string // `genisys <dir|file>`: project to focus + file to edit
+	winCtl                api.WindowController
 }
 
 func serveCmd(args []string) error {
@@ -63,6 +64,7 @@ func runServer(o serverOpts, open func(url string) <-chan struct{}) error {
 
 	api.Version = version
 	srv := api.New(a, o.cfgPath, ui.Dist(), log.Default())
+	srv.WinCtl = o.winCtl
 
 	if host, _, err := net.SplitHostPort(o.addr); err == nil && host == "0.0.0.0" {
 		fmt.Fprintln(os.Stderr, "warning: bound to 0.0.0.0 — the bearer token is your only protection (SPEC §22)")
