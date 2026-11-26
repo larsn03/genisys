@@ -2,6 +2,11 @@
 
 package desktop
 
-// Rounded frameless corners are a GTK4 CSS feature; the gtk3 build tag
-// path keeps square corners (webkit2gtk-4.1 transparency differs).
+import "unsafe"
+
+// Rounded frameless corners and native gestures are GTK4 CSS/controller
+// features; the gtk3 tag path keeps square corners and Wails' own
+// (X11-flavoured) drag path.
 func installRoundedFramelessCSS() {}
+
+func installWindowGestures(native unsafe.Pointer) {}

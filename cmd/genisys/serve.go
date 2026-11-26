@@ -60,7 +60,19 @@ func runServer(o serverOpts, open func(url string) <-chan struct{}) error {
 	if err != nil {
 		return err
 	}
-	defer a.Close()
+	// Desktop UX: closing the window must end the process even if a
+	// worker or DB handle refuses to drain — bound every cleanup step.
+	defer func() {
+		done := make(chan struct{})
+		go func() {
+			defer func() { _ = recover(); close(done) }()
+			a.Close()
+		}()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+	}()
 
 	api.Version = version
 	srv := api.New(a, o.cfgPath, ui.Dist(), log.Default())
@@ -108,9 +120,17 @@ func runServer(o serverOpts, open func(url string) <-chan struct{}) error {
 	case <-quit: // window closed
 	case <-ctx.Done():
 	}
-	shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	srv.Sup.CloseAll()
+	workerDone := make(chan struct{})
+	go func() {
+		defer func() { _ = recover(); close(workerDone) }()
+		srv.Sup.CloseAll()
+	}()
+	select {
+	case <-workerDone:
+	case <-time.After(2 * time.Second):
+	}
 	_ = httpSrv.Shutdown(shutCtx) // best-effort within the timeout
 	return nil
 }

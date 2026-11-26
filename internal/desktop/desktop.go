@@ -11,6 +11,8 @@
 package desktop
 
 import (
+	"time"
+
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -64,6 +66,8 @@ func Run(o Options) error {
 		URL:              o.URL,
 		BackgroundColour: application.NewRGBA(19, 20, 25, 255), // match --color-bg (dark)
 	})
+	installWindowGestures(win.NativeWindow())
+
 	if o.Ctl != nil {
 		o.Ctl.Minimize = func() { win.Minimise() }
 		o.Ctl.ToggleMaximize = func() { win.ToggleMaximise() }
@@ -73,5 +77,27 @@ func Run(o Options) error {
 	win.Center() // Center returns nothing (v3 API)
 	win.Show()
 
-	return app.Run()
+	// Robust shutdown: don't depend on app.Run() unwinding cleanly when
+	// the last window closes (its GApplication teardown has proven
+	// flaky on GNOME/Wayland). Watch the window's own closing event and
+	// return ourselves; app.Run gets a grace period to exit naturally.
+	// The window is already being destroyed by Wails' default
+	// WindowClosing listener, so returning here is safe.
+	closed := make(chan struct{})
+	win.OnWindowEvent(events.Common.WindowClosing,
+		func(*application.WindowEvent) { close(closed) })
+
+	runErr := make(chan error, 1)
+	go func() { runErr <- app.Run() }()
+	select {
+	case err := <-runErr:
+		return err
+	case <-closed:
+		select {
+		case err := <-runErr:
+			return err
+		case <-time.After(2 * time.Second):
+			return nil
+		}
+	}
 }
