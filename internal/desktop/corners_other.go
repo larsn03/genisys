@@ -10,3 +10,5 @@ import "unsafe"
 func installRoundedFramelessCSS() {}
 
 func installWindowGestures(native unsafe.Pointer) {}
+
+func setMaximised(native unsafe.Pointer, max bool) {}

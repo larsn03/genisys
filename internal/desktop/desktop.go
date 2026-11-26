@@ -12,7 +12,10 @@ package desktop
 
 import (
 	"os"
+	"strings"
+	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -39,6 +42,19 @@ type Options struct {
 // Run opens the native window and blocks until the app quits (last
 // window closed → Wails quits by default on Linux/Windows/macOS).
 func Run(o Options) error {
+	// WebKitGTK's DMABUF renderer hangs (frozen main loop, GNOME's
+	// "not responding") on some Mesa/DisplayLink(evdi) setups — seen
+	// exactly on maximize/iconify here. Opt out unless the user said
+	// otherwise; harmless elsewhere.
+	for _, kv := range []string{
+		"WEBKIT_DISABLE_DMABUF_RENDERER=1",
+	} {
+		k := strings.TrimSuffix(kv, "=1")
+		if os.Getenv(k) == "" {
+			_ = os.Setenv(k, "1")
+		}
+	}
+
 	app := application.New(application.Options{
 		Name:        "Genisys",
 		Description: "AI agent for OpenAI-compatible endpoints",
@@ -72,19 +88,46 @@ func Run(o Options) error {
 	// The native GtkWindow only exists once app.Run() has created it —
 	// NativeWindow() is nil before that. Poll until it appears, then
 	// attach the gesture controller (g_idle_add is thread-safe).
+	var (
+		nativeMu sync.Mutex
+		native   unsafe.Pointer
+	)
 	go func() {
 		for range 200 {
 			if p := win.NativeWindow(); p != nil {
+				nativeMu.Lock()
+				native = p
+				nativeMu.Unlock()
 				installWindowGestures(p)
 				return
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
 	}()
+	nativeWin := func() unsafe.Pointer {
+		nativeMu.Lock()
+		defer nativeMu.Unlock()
+		return native
+	}
 
 	if o.Ctl != nil {
 		o.Ctl.Minimize = func() { win.Minimise() }
-		o.Ctl.ToggleMaximize = func() { win.ToggleMaximise() }
+		// NOT win.ToggleMaximise(): its closure runs on the main loop
+		// and calls IsMaximised() -> InvokeSyncWithResult -> deadlock
+		// (Wails v3.0.0 bug; freezes the app on maximize). Calling
+		// Maximise/UnMaximise from this goroutine is safe.
+		o.Ctl.ToggleMaximize = func() {
+			max := win.IsMaximised()
+			if p := nativeWin(); p != nil {
+				setMaximised(p, !max)
+				return
+			}
+			// Native window not up yet: Maximise is safe from here,
+			// UnMaximise is not (deadlock) — just skip.
+			if !max {
+				win.Maximise()
+			}
+		}
 		o.Ctl.IsMaximized = func() bool { return win.IsMaximised() }
 		o.Ctl.Close = func() { win.Close() }
 	}

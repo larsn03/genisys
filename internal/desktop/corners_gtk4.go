@@ -23,7 +23,11 @@ static gboolean install_css_cb(gpointer data) {
 	gtk_css_provider_load_from_string(p,
 		"window.wails-frameless {"
 		"  border-radius: 12px;"
-		"  background-color: rgba(0, 0, 0, 0);"
+		// Fully transparent => GTK never paints the window surface =>
+		// no commit to acknowledge configure requests => mutter's
+		// interactive resize glitches ("Buggy client" workaround).
+		// Alpha 0.01 forces a paint+commit and is visually identical.
+		"  background-color: rgba(0, 0, 0, 0.01);"
 		"}"
 		"window.wails-frameless.maximized,"
 		"window.wails-frameless.tiled,"
@@ -96,83 +100,143 @@ static GdkSurfaceEdge edge_of(int zone) {
 	}
 }
 
-static void on_pressed(GtkGestureClick *g, gint n_press, double x, double y,
-                       gpointer user_data) {
-	(void)n_press;
-	if (gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(g)) != 1)
+// drag-begin fires once the drag threshold is exceeded, while the
+// motion event is still being processed — the implicit grab serial is
+// valid here, which is exactly what Wayland requires for move/resize.
+static void on_drag_begin(GtkGestureDrag *g, double dx, double dy,
+                          GtkWidget *target) {
+	(void)dx;
+	(void)dy;
+	DragState *st = g_object_get_data(G_OBJECT(target), "genisys-drag");
+	// Press position + button straight from the gesture: no reliance on
+	// GtkGesture::down (renamed away in GTK 4.24).
+	double sx = 0, sy = 0;
+	gtk_gesture_drag_get_start_point(GTK_GESTURE_DRAG(g), &sx, &sy);
+	GdkEvent *ev = gtk_gesture_get_last_event(GTK_GESTURE(g), NULL);
+	st->button = ev ? gdk_button_event_get_button(ev) : 1;
+	st->px = sx;
+	st->py = sy;
+	st->zone = zone_at(target, sx, sy);
+	if (st->zone == Z_NONE)
 		return;
-	GtkWidget *win = GTK_WIDGET(user_data);
-	DragState *st = g_object_get_data(G_OBJECT(win), "genisys-drag");
-	st->px = x;
-	st->py = y;
-	st->button = 1;
-	st->started = 0;
-	st->zone = zone_at(win, x, y);
-	g_printerr("[genisys-gesture] press zone=%d at %.0f,%.0f (w=%d h=%d)\n",
-	        st->zone, x, y, gtk_widget_get_width(win),
-	        gtk_widget_get_height(win));
-}
-
-static void on_update(GtkGestureClick *g, guint n_press, double x, double y,
-                      gpointer user_data) {
-	(void)n_press;
-	GtkWidget *win = GTK_WIDGET(user_data);
-	DragState *st = g_object_get_data(G_OBJECT(win), "genisys-drag");
-	if (st->started || st->zone == Z_NONE) return;
-	double dx = x - st->px, dy = y - st->py;
-	if (dx * dx + dy * dy < THRESH2) return;
-	st->started = 1; // fire exactly once, inside this event
-
-	GtkNative *native = gtk_widget_get_native(win);
-	GdkSurface *surf = native ? gtk_native_get_surface(native) : NULL;
-	if (!surf || !GDK_IS_TOPLEVEL(surf)) return;
+	g_printerr("[genisys-gesture] press+drag zone=%d at %.0f,%.0f\n",
+	           st->zone, sx, sy);
+	// The webview is a GtkNative with its OWN child surface; move/resize
+	// must go to the toplevel surface of the window.
 	GdkDevice *dev = gtk_gesture_get_device(GTK_GESTURE(g));
-	if (!dev) return;
-
-	g_printerr("[genisys-gesture] start %s zone=%d (dev=%s)\n",
-	        st->zone == Z_TITLE ? "move" : "resize", st->zone,
-	        dev ? gdk_device_get_name(dev) : "none");
-	if (st->zone == Z_TITLE)
+	if (!dev) {
+		GdkSeat *seat = gdk_display_get_default_seat(
+		                        gdk_display_get_default());
+		dev = gdk_seat_get_pointer(seat);
+	}
+	GtkWidget *win = gtk_widget_get_ancestor(target, GTK_TYPE_WINDOW);
+	GdkSurface *surf = gtk_native_get_surface(GTK_NATIVE(win));
+	if (!dev || !GDK_IS_SURFACE(surf) || !GDK_IS_TOPLEVEL(surf)) {
+		g_printerr("[genisys-gesture] abort: dev=%p surf=%p toplevel=%d\n",
+		           (void *)dev, (void *)surf,
+		           surf ? (int)GDK_IS_TOPLEVEL(surf) : -1);
+		return;
+	}
+	st->started = 1;
+	g_printerr("[genisys-gesture] begin %s zone=%d\n",
+	           st->zone == Z_TITLE ? "move" : "resize", st->zone);
+	if (st->zone == Z_TITLE) {
 		gdk_toplevel_begin_move(GDK_TOPLEVEL(surf), dev, st->button,
-		                        x, y, GDK_CURRENT_TIME);
-	else
+		                        st->px, st->py, GDK_CURRENT_TIME);
+	} else {
+		// Mutter ignores resize requests on maximized surfaces; GNOME
+		// semantics are "resize un-maximizes" — do that first.
+		if (gtk_window_is_maximized(GTK_WINDOW(win)))
+			gtk_window_unmaximize(GTK_WINDOW(win));
 		gdk_toplevel_begin_resize(GDK_TOPLEVEL(surf), edge_of(st->zone), dev,
-		                          st->button, x, y, GDK_CURRENT_TIME);
-	g_printerr("[genisys-gesture] request sent\n");
+		                          st->button, st->px, st->py,
+		                          GDK_CURRENT_TIME);
+	}
 }
 
-static void on_released(GtkGestureClick *g, gint n_press, double x, double y,
-                        gpointer user_data) {
-	(void)g;
-	GtkWidget *win = GTK_WIDGET(user_data);
-	DragState *st = g_object_get_data(G_OBJECT(win), "genisys-drag");
-	if (!st->started && n_press == 2 && y <= TB_H &&
-	    x < gtk_widget_get_width(win) - TB_BTNS) {
-		// double-click on the titlebar strip → toggle maximised
+// Click gesture: only used for double-click-to-maximize.
+static void on_released(GtkGestureClick *g, gint n_press, gint button,
+                        double x, double y, GtkWidget *target) {
+	(void)n_press;
+	DragState *st = g_object_get_data(G_OBJECT(target), "genisys-drag");
+	st->zone = Z_NONE;
+	st->started = 0;
+	if (button != 1)
+		return;
+	int width = gtk_widget_get_width(target);
+	if (gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(g)) == 1 &&
+	    n_press == 2 && y <= TB_H && x < width - TB_BTNS) {
+		GtkWidget *win = gtk_widget_get_ancestor(target, GTK_TYPE_WINDOW);
 		if (gtk_window_is_maximized(GTK_WINDOW(win)))
 			gtk_window_unmaximize(GTK_WINDOW(win));
 		else
 			gtk_window_maximize(GTK_WINDOW(win));
 	}
-	st->zone = Z_NONE;
-	st->started = 0;
+}
+
+static GtkWidget *find_descendant(GtkWidget *widget, const char *type_name) {
+	if (G_IS_OBJECT(widget) &&
+	    g_type_is_a(G_OBJECT_TYPE(widget), g_type_from_name(type_name)))
+		return widget;
+	for (GtkWidget *c = gtk_widget_get_first_child(widget); c;
+	     c = gtk_widget_get_next_sibling(c)) {
+		GtkWidget *f = find_descendant(c, type_name);
+		if (f)
+			return f;
+	}
+	return NULL;
 }
 
 static void genisys_install_gestures(GtkWindow *win) {
 	GtkWidget *w = GTK_WIDGET(win);
-	g_printerr("[genisys-gesture] installed; display=%s\n",
+	// Attach to the webview, not the window: the webview receives all
+	// pointer traffic, and a CAPTURE controller on it runs before
+	// WebKitGTK's own handling. A window-level controller sees the
+	// press but never the motion (the webview consumes it). The webview
+	// fills the window, so its coordinates are the page's.
+	GtkWidget *target = find_descendant(w, "WebKitWebView");
+	if (!target)
+		target = w;
+	g_printerr("[genisys-gesture] installed on %s; display=%s\n",
+	        G_OBJECT_TYPE_NAME(target),
 	        gdk_display_get_name(gdk_display_get_default()));
 	DragState *st = g_new0(DragState, 1);
-	g_object_set_data_full(G_OBJECT(w), "genisys-drag", st, g_free);
-	GtkGesture *g = gtk_gesture_click_new();
-	gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(g),
+	g_object_set_data_full(G_OBJECT(target), "genisys-drag", st, g_free);
+
+	// Drag gesture (capture): drives compositor move/resize.
+	GtkGestureDrag *drag = (GtkGestureDrag *) gtk_gesture_drag_new();
+	gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(drag),
 	                                           GTK_PHASE_CAPTURE);
-	g_signal_connect(g, "pressed", G_CALLBACK(on_pressed), w);
-	g_signal_connect(g, "update", G_CALLBACK(on_update), w);
-	g_signal_connect(g, "released", G_CALLBACK(on_released), w);
-	// note: GtkGesture::cancelled was removed in GTK 4.24; on_pressed
-	// resets state, so a missed release self-heals on the next press.
-	gtk_widget_add_controller(w, GTK_EVENT_CONTROLLER(g));
+	g_signal_connect(drag, "drag-begin", G_CALLBACK(on_drag_begin), target);
+	gtk_widget_add_controller(target, GTK_EVENT_CONTROLLER(drag));
+
+	// Click gesture (capture): double-click on the titlebar = maximize.
+	GtkGestureClick *click = (GtkGestureClick *) gtk_gesture_click_new();
+	gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(click),
+	                                           GTK_PHASE_CAPTURE);
+	g_signal_connect(click, "released", G_CALLBACK(on_released), target);
+	gtk_widget_add_controller(target, GTK_EVENT_CONTROLLER(click));
+}
+
+// ── Maximise/unmaximise without Wails' wrappers ─────────────────────
+// Wails' UnMaximise() deadlocks the main loop on Linux:
+// EnableSizeConstraints -> InvokeSync(closure) -> SetMinSize -> Size()
+// -> InvokeSyncWithResult, i.e. the main loop waits for itself.
+// gtk_window_maximize/unmaximize alone does everything useful (state
+// flags, configure); Wails' isMaximised reads the live GTK state, so
+// bypassing its wrappers keeps state consistent.
+
+static gboolean cb_maximise(gpointer d) {
+	gtk_window_maximize(GTK_WINDOW(d));
+	return G_SOURCE_REMOVE;
+}
+static gboolean cb_unmaximise(gpointer d) {
+	gtk_window_unmaximize(GTK_WINDOW(d));
+	return G_SOURCE_REMOVE;
+}
+
+static void genisys_set_maximised(GtkWindow *win, gboolean maximised) {
+	g_idle_add(maximised ? cb_maximise : cb_unmaximise, win);
 }
 
 static gboolean install_gestures_cb(gpointer data) {
@@ -182,6 +246,10 @@ static gboolean install_gestures_cb(gpointer data) {
 
 static void genisys_schedule_gestures(GtkWindow *win) {
 	g_idle_add(install_gestures_cb, win);
+}
+
+static void genisys_schedule_set_maximised(GtkWindow *win, gboolean max) {
+	genisys_set_maximised(win, max);
 }
 */
 import "C"
@@ -205,4 +273,21 @@ func installWindowGestures(native unsafe.Pointer) {
 	}
 	C.genisys_schedule_gestures((*C.GtkWindow)(native))
 	log.Print("gestures: idle queued")
+}
+
+// setMaximised toggles the maximized state via plain GTK, dodging the
+// Wails UnMaximise main-loop deadlock. native comes from
+// WebviewWindow.NativeWindow().
+func setMaximised(native unsafe.Pointer, max bool) {
+	if native == nil {
+		return
+	}
+	C.genisys_schedule_set_maximised((*C.GtkWindow)(native), C.gboolean(bool2i(max)))
+}
+
+func bool2i(b bool) C.int {
+	if b {
+		return 1
+	}
+	return 0
 }
