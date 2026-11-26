@@ -6,7 +6,7 @@ COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 DISTOS  := linux/amd64 linux/arm64 darwin/arm64 windows/amd64
 
-.PHONY: all build portable window test testrace lint fmt vet ui embed-check deps-audit clean
+.PHONY: all build portable window test testrace lint fmt vet ui embed-check deps-audit clean e2e dist
 
 all: build
 
