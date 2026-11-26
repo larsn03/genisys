@@ -10,6 +10,7 @@ import { RightPanel } from "./components/RightPanel";
 import { PreviewOverlay } from "./components/PreviewOverlay";
 import { SettingsModal } from "./components/SettingsModal";
 import { Onboarding } from "./components/Onboarding";
+import { Chev } from "./components/Chev";
 
 export default function App() {
   const sessions = useStore((s) => s.sessions);
@@ -55,6 +56,7 @@ export default function App() {
   }, [sessions]);
 
   const sess = sessions.find((s) => s.id === current);
+  const projName = projects.find((p) => p.id === sess?.project_id)?.name;
 
   return (
     <div className="h-full flex min-w-0">
@@ -70,6 +72,13 @@ export default function App() {
             className={`ml-auto w-2 h-2 rounded-full ${connected ? "bg-ok" : "bg-err"}`}
             title={connected ? "connected" : "reconnecting…"}
           />
+          <button
+            onClick={() => setLayout({ leftOpen: false })}
+            className="text-faint hover:text-ink p-1 rounded-md hover:bg-panel2 -mr-1"
+            title="Collapse sessions rail"
+          >
+            <Chev dir="left" />
+          </button>
         </div>
         <button
           onClick={() => void create()}
@@ -127,28 +136,46 @@ export default function App() {
 
       {/* center */}
       <main className="flex-1 min-w-0 flex flex-col relative">
-        <button
-          onClick={() => setLayout({ leftOpen: !layout.leftOpen })}
-          className="absolute top-3 left-2 z-10 text-faint hover:text-ink text-xs px-1"
-          title={`${layout.leftOpen ? "Collapse" : "Expand"} sessions rail`}
-        >
-          {layout.leftOpen ? "⟨" : "⟩"} sessions
-        </button>
+        {!layout.leftOpen && (
+          <button
+            onClick={() => setLayout({ leftOpen: true })}
+            className="absolute top-2.5 left-2.5 z-10 text-faint hover:text-ink p-1.5 rounded-md hover:bg-panel2 border border-line bg-panel/70"
+            title="Expand sessions rail"
+          >
+            <Chev dir="right" />
+          </button>
+        )}
         {current ? (
           <>
-            <header className="px-6 py-3 border-b border-line flex items-center gap-3 text-xs text-mute">
-              <span className="text-ink text-sm font-medium truncate pl-12">
+            <header className="h-11 shrink-0 px-4 border-b border-line flex items-center gap-2.5 text-xs text-mute">
+              <span className="text-ink text-sm font-medium truncate">
                 {sess?.title ?? "…"}
               </span>
-              <span className="font-mono">{sess?.model_ref}</span>
+              {projName && (
+                <span className="text-faint text-[11px] uppercase tracking-wider truncate">
+                  · {projName}
+                </span>
+              )}
+              <span className="font-mono text-[11px] border border-line rounded-md px-1.5 py-0.5 text-mute whitespace-nowrap">
+                {sess?.model_ref}
+              </span>
               {running && <span className="text-accent2 animate-pulse">working</span>}
               <button
                 onClick={() => useStore.getState().setSettingsOpen(true)}
-                className="ml-auto text-faint hover:text-ink text-sm"
+                className="ml-auto text-faint hover:text-ink text-sm p-1.5 rounded-md hover:bg-panel2"
                 title="Settings"
               >
                 ⚙
               </button>
+              {!layout.rightOpen && (
+                <button
+                  onClick={() => setLayout({ rightOpen: true })}
+                  className="text-faint hover:text-ink p-1.5 rounded-md hover:bg-panel2 border border-line"
+                  title="Open workspace panel"
+                >
+                  <Chev dir="left" />
+                </button>
+              )}
             </header>
             <MessageStream />
             <Composer />
@@ -158,10 +185,18 @@ export default function App() {
             {models.length === 0 ? (
               <Onboarding />
             ) : (
-              <div className="text-center">
-                <div className="text-3xl mb-2">⚡</div>
-                <div className="text-sm">
-                  Create a session and ask Genisys to build, fix, or explain something.
+              <div className="text-center max-w-md">
+                <div className="mx-auto w-14 h-14 rounded-2xl bg-accent/15 border border-accent/25 grid place-items-center text-[26px]">
+                  ⚡
+                </div>
+                <div className="mt-4 text-[15px] font-medium text-ink">Welcome to Genisys</div>
+                <div className="mt-1.5 text-[13px] leading-relaxed">
+                  Create a session and ask Genisys to build, fix, or explain
+                  something — or open a folder with{" "}
+                  <code className="font-mono text-[12px] bg-panel2 rounded px-1.5 py-0.5">
+                    genisys &lt;dir&gt;
+                  </code>
+                  .
                 </div>
               </div>
             )}
@@ -183,16 +218,6 @@ export default function App() {
           <RightPanel />
         </>
       )}
-      {current && (
-        <button
-          onClick={() => setLayout({ rightOpen: !layout.rightOpen })}
-          className="absolute top-3 right-2 z-10 text-faint hover:text-ink text-xs px-1"
-          title={`${layout.rightOpen ? "Collapse" : "Open"} workspace panel`}
-        >
-          {layout.rightOpen ? "⟩" : "⟨"} files
-        </button>
-      )}
-
       <PreviewOverlay />
       <SettingsModal />
 
@@ -303,10 +328,18 @@ function SessionRowView({
         ⋯
       </button>
       {menu && (
-        <div
-          className="absolute right-2 top-8 z-30 w-40 bg-panel border border-line rounded-xl shadow-2xl py-1 text-[12px]"
-          onClick={(e) => e.stopPropagation()}
-        >
+        <>
+          <div
+            className="fixed inset-0 z-20"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenu(false);
+            }}
+          />
+          <div
+            className="absolute right-2 top-8 z-30 w-40 bg-panel border border-line rounded-xl shadow-2xl py-1 text-[12px]"
+            onClick={(e) => e.stopPropagation()}
+          >
           <button className="menu-item" onClick={act(() => togglePin(s.id))}>
             {s.pinned ? "Unpin" : "Pin"}
           </button>
@@ -325,6 +358,7 @@ function SessionRowView({
           <button className="menu-item" onClick={act(() => void archive(s.id))}>
             Archive
           </button>
+          <div className="menu-sep" />
           <button
             className="menu-item text-err"
             onClick={act(() => {
@@ -333,7 +367,8 @@ function SessionRowView({
           >
             Delete
           </button>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );

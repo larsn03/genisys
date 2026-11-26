@@ -92,7 +92,7 @@ export function Composer() {
               }
             }}
             rows={Math.min(8, Math.max(1, text.split("\n").length))}
-            placeholder={running ? "Type to interject…" : "Ask Genisys… ( @ files · @skill: skills )"}
+            placeholder={running ? "Type to interject…" : "Ask Genisys to do something…"}
             className="w-full bg-transparent resize-none outline-none px-4 pt-3.5 pb-1 text-[14px] placeholder:text-faint"
           />
           <div className="flex items-center gap-2 px-3 pb-2.5">
@@ -126,7 +126,7 @@ export function Composer() {
               </button>
             )}
             <span className="text-[11px] text-faint ml-auto">
-              Enter to send · Shift+Enter newline
+              {running ? "Enter queues · Shift+Enter interrupts" : "Enter to send · Shift+Enter newline"}
             </span>
             <div className="flex rounded-lg overflow-hidden border border-line">
               <button

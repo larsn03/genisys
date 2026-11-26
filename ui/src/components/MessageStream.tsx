@@ -37,6 +37,23 @@ export function MessageStream() {
       }}
     >
       <div className="max-w-3xl mx-auto flex flex-col gap-3 pb-24">
+        {!items.length && !running && (
+          <div className="pt-20 flex flex-col items-center text-center select-none">
+            <div className="w-12 h-12 rounded-2xl bg-accent/15 border border-accent/25 grid place-items-center text-[22px]">
+              ⚡
+            </div>
+            <div className="mt-4 text-[15px] font-medium text-ink">
+              What should we work on?
+            </div>
+            <div className="mt-1.5 text-[13px] text-mute max-w-sm leading-relaxed">
+              Ask Genisys to build, fix or explain something. Type{" "}
+              <code className="font-mono text-[12px] bg-panel2 rounded px-1.5 py-0.5">@</code>{" "}
+              to reference files,{" "}
+              <code className="font-mono text-[12px] bg-panel2 rounded px-1.5 py-0.5">@skill:</code>{" "}
+              to apply a skill.
+            </div>
+          </div>
+        )}
         {items.length > WINDOW && !showAll && (
           <button
             onClick={() => setShowAll(true)}

@@ -6,6 +6,7 @@
 import { Suspense, lazy, useEffect, useState } from "react";
 import { api } from "../api";
 import { useStore } from "../store";
+import { Chev } from "./Chev";
 
 const EditorPane = lazy(() =>
   import("./EditorPane").then((m) => ({ default: m.EditorPane })),
@@ -67,6 +68,13 @@ export function RightPanel() {
           title="Refresh"
         >
           ⟳
+        </button>
+        <button
+          onClick={() => useStore.getState().setLayout({ rightOpen: false })}
+          className="px-3 text-faint hover:text-ink border-l border-line self-stretch"
+          title="Collapse workspace panel"
+        >
+          <Chev dir="right" />
         </button>
       </div>
       {tab === "files" && <FilesTab />}
