@@ -338,6 +338,7 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := s.ConfigPath
+	var newCfg *apiconfig.Config
 	err := apiconfig.Update(path, func(doc *yaml.Node) error {
 		for k, v := range kv {
 			keys := strings.Split(k, ".")
@@ -359,20 +360,23 @@ func (s *Server) patchConfig(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 		}
+		// validate before write: an invalid patch must not touch the
+		// file nor the running config (previously the file was written
+		// first, so e.g. provider=searxng without base_url half-applied
+		// and the UI silently reverted while the file had changed)
+		cfg, err := apiconfig.ParseAppNode(path, doc)
+		if err != nil {
+			return err
+		}
+		newCfg = cfg
 		return nil
 	})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// reload so the running server picks up web/agent changes
-	if cfg, err := apiconfig.LoadApp(path); err == nil {
-		issues := apiconfig.ValidateApp(cfg, path)
-		if len(issues) > 0 {
-			writeErr(w, http.StatusBadRequest, apiconfig.Issues(issues).Error())
-			return
-		}
-		s.App.Cfg = cfg
+	if newCfg != nil {
+		s.App.Cfg = newCfg // running server picks up web/agent changes
 	}
 	s.getConfig(w, r)
 }

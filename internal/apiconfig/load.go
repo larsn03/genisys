@@ -66,6 +66,22 @@ func ParseApp(path string, data []byte) (*Config, error) {
 	return cfg, nil
 }
 
+// ParseAppNode validates a live YAML document node (settings UI PATCH):
+// encodes the node and runs the same strict decode + validation as
+// ParseApp, so a patch can abort before touching the file.
+func ParseAppNode(path string, doc *yaml.Node) (*Config, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	if err := enc.Encode(doc); err != nil {
+		_ = enc.Close()
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	if err := enc.Close(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return ParseApp(path, buf.Bytes())
+}
+
 // LoadProject reads and validates one project.yaml (SPEC §18.3).
 func LoadProject(path string) (*ProjectConfig, error) {
 	data, err := read(path)

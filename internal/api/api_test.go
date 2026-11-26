@@ -923,6 +923,57 @@ func TestGenisysTool(t *testing.T) {
 
 // --- P6-4: settings screens ↔ config.yaml -------------------------------------
 
+func TestPatchConfigAtomic(t *testing.T) {
+	e := newEnv(t, []string{sseText("ok")}, 0)
+	seed := `version: 1
+default_model: mock/m1
+endpoints:
+  - id: mock
+    base_url: http://127.0.0.1:1/v1
+    models:
+      - id: m1
+web:
+  search_enabled: true
+  provider: tavily
+`
+	if err := os.WriteFile(e.app.CfgPath, []byte(seed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.app.ReloadeCfg(); err != nil {
+		t.Fatal(err)
+	}
+
+	// provider=searxng + search enabled + empty base_url is invalid:
+	// the patch must fail AND leave the file untouched (regression:
+	// the file used to be written before validation, so the setting
+	// "didn't apply" in the UI while the config had actually changed).
+	code, _ := e.do(t, "PATCH", "/api/config", map[string]string{"web.provider": "searxng"})
+	if code != 400 {
+		t.Fatalf("want 400, got %d", code)
+	}
+	data, err := os.ReadFile(e.app.CfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "provider: searxng") {
+		t.Fatalf("file modified despite validation failure:\n%s", data)
+	}
+
+	// give it the missing base_url first, then the provider applies.
+	if code, _ := e.do(t, "PATCH", "/api/config", map[string]string{"web.searxng.base_url": "http://sx.example"}); code != 200 {
+		t.Fatalf("base_url patch: %d", code)
+	}
+	if code, _ := e.do(t, "PATCH", "/api/config", map[string]string{"web.provider": "searxng"}); code != 200 {
+		t.Fatalf("provider patch: %d", code)
+	}
+	var st map[string]any
+	e.mustJSON(t, "GET", "/api/settings", nil, &st)
+	web := st["web"].(map[string]any)
+	if web["provider"] != "searxng" {
+		t.Fatalf("provider=%v", web["provider"])
+	}
+}
+
 func TestSettingsRoundTrip(t *testing.T) {
 	e := newEnv(t, []string{sseText("ok")}, 0)
 	seed := `# genisys config
