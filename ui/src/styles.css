@@ -76,3 +76,21 @@ body { background: var(--color-bg); color: var(--color-ink); font-family: var(--
 ::-webkit-scrollbar-corner { background: transparent; }
 
 ::selection { background: color-mix(in srgb, var(--color-accent) 35%, transparent); }
+
+/* Custom window chrome (frameless native window). */
+.titlebar {
+  --wails-draggable: drag;
+  height: 38px;
+  background: color-mix(in srgb, var(--color-panel) 60%, var(--color-bg));
+  border-bottom: 1px solid var(--color-line);
+}
+.titlebar button {
+  --wails-draggable: no-drag;
+  width: 46px;
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  color: var(--color-mute);
+}
+.titlebar button:hover { background: var(--color-panel2); color: var(--color-ink); }
+.titlebar .tb-close:hover { background: #c7443e; color: #fff; }

@@ -11,6 +11,7 @@ import { PreviewOverlay } from "./components/PreviewOverlay";
 import { SettingsModal } from "./components/SettingsModal";
 import { Onboarding } from "./components/Onboarding";
 import { Chev } from "./components/Chev";
+import { TitleBar } from "./components/TitleBar";
 
 export default function App() {
   const sessions = useStore((s) => s.sessions);
@@ -59,7 +60,9 @@ export default function App() {
   const projName = projects.find((p) => p.id === sess?.project_id)?.name;
 
   return (
-    <div className="h-full flex min-w-0">
+    <div className="h-full flex flex-col min-w-0">
+      <TitleBar />
+      <div className="flex-1 min-h-0 flex min-w-0">
       {/* left rail */}
       <aside
         className="shrink-0 border-r border-line bg-panel/50 flex flex-col overflow-hidden"
@@ -218,6 +221,7 @@ export default function App() {
           <RightPanel />
         </>
       )}
+      </div>
       <PreviewOverlay />
       <SettingsModal />
 
