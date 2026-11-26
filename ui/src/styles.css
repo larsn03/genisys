@@ -35,7 +35,11 @@
 }
 :root[data-theme="dark"] { color-scheme: dark; }
 
-html, body, #root { height: 100%; }
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none; /* no elastic pan in the webview */
+}
 body { background: var(--color-bg); color: var(--color-ink); font-family: var(--font-sans); }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -132,7 +136,11 @@ body { background: var(--color-bg); color: var(--color-ink); font-family: var(--
 }
 :root[data-theme="dark"] { color-scheme: dark; }
 
-html, body, #root { height: 100%; }
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none; /* no elastic pan in the webview */
+}
 body { background: var(--color-bg); color: var(--color-ink); font-family: var(--font-sans); }
 
 ::-webkit-scrollbar { width: 8px; height: 8px; }
