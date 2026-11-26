@@ -32,14 +32,18 @@ export function SettingsModal() {
 
   if (!open) return null;
 
-  const patch = async (kv: Record<string, string>, note = "saved ✓") => {
+  // resolves to null on success, the error text otherwise — tabs show
+  // it inline right where the user clicked, not just in the footer
+  const patch = async (kv: Record<string, string>, note = "saved ✓"): Promise<string | null> => {
     setMsg("");
     try {
       await api.patchConfig(kv);
       setCfg(await api.settings());
       setMsg(note);
+      return null;
     } catch (e) {
       setMsg(String(e));
+      return String(e);
     }
   };
 
@@ -128,7 +132,7 @@ function NumRow({ k, path, value, patch }: { k: string; path: string; value: num
   );
 }
 
-type P = (kv: Record<string, string>, note?: string) => Promise<void>;
+type P = (kv: Record<string, string>, note?: string) => Promise<string | null>;
 
 function ModelsTab({ cfg, patch }: { cfg: Settings; patch: P }) {
   const models = cfg.endpoints.flatMap((ep) =>
@@ -274,6 +278,7 @@ function AgentTab({ cfg, patch }: { cfg: Settings; patch: P }) {
 }
 
 function WebTab({ cfg, patch }: { cfg: Settings; patch: P }) {
+  const [hint, setHint] = useState("");
   const [probe, setProbe] = useState("");
   const [baseUrl, setBaseUrl] = useState(cfg.web.searxng.base_url);
   return (
@@ -282,12 +287,19 @@ function WebTab({ cfg, patch }: { cfg: Settings; patch: P }) {
         <select
           className={field}
           value={cfg.web.search_enabled ? "on" : "off"}
-          onChange={(e) => void patch({ "web.search_enabled": e.target.value === "on" ? "true" : "false" })}
+          onChange={(e) =>
+            void patch({ "web.search_enabled": e.target.value === "on" ? "true" : "false" }).then((err) =>
+              setHint(err ? err.replace(/^.*?\.yaml:\s*/, "") : "")
+            )
+          }
         >
           <option value="off">off</option>
           <option value="on">on</option>
         </select>
       </Row>
+      {hint && (
+        <div className="text-[11.5px] text-accent2 pb-1 pl-[236px]">{hint}</div>
+      )}
       <Row k="Provider">
         <select
           className={field}
@@ -305,7 +317,7 @@ function WebTab({ cfg, patch }: { cfg: Settings; patch: P }) {
           <input className={field} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
           <button
             className="shrink-0 text-[12px] px-3 py-1.5 rounded-lg border border-line text-mute hover:text-ink"
-            onClick={() => void patch({ "web.searxng.base_url": baseUrl })}
+            onClick={() => void patch({ "web.searxng.base_url": baseUrl }).then((err) => setHint(err ?? ""))}
           >
             Save
           </button>
