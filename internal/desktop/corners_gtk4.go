@@ -108,6 +108,9 @@ static void on_pressed(GtkGestureClick *g, gint n_press, double x, double y,
 	st->button = 1;
 	st->started = 0;
 	st->zone = zone_at(win, x, y);
+	g_printerr("[genisys-gesture] press zone=%d at %.0f,%.0f (w=%d h=%d)\n",
+	        st->zone, x, y, gtk_widget_get_width(win),
+	        gtk_widget_get_height(win));
 }
 
 static void on_update(GtkGestureClick *g, guint n_press, double x, double y,
@@ -126,12 +129,16 @@ static void on_update(GtkGestureClick *g, guint n_press, double x, double y,
 	GdkDevice *dev = gtk_gesture_get_device(GTK_GESTURE(g));
 	if (!dev) return;
 
+	g_printerr("[genisys-gesture] start %s zone=%d (dev=%s)\n",
+	        st->zone == Z_TITLE ? "move" : "resize", st->zone,
+	        dev ? gdk_device_get_name(dev) : "none");
 	if (st->zone == Z_TITLE)
 		gdk_toplevel_begin_move(GDK_TOPLEVEL(surf), dev, st->button,
 		                        x, y, GDK_CURRENT_TIME);
 	else
 		gdk_toplevel_begin_resize(GDK_TOPLEVEL(surf), edge_of(st->zone), dev,
 		                          st->button, x, y, GDK_CURRENT_TIME);
+	g_printerr("[genisys-gesture] request sent\n");
 }
 
 static void on_released(GtkGestureClick *g, gint n_press, double x, double y,
@@ -151,16 +158,10 @@ static void on_released(GtkGestureClick *g, gint n_press, double x, double y,
 	st->started = 0;
 }
 
-static void on_cancelled(GtkGestureClick *g, gpointer user_data) {
-	(void)g;
-	GtkWidget *win = GTK_WIDGET(user_data);
-	DragState *st = g_object_get_data(G_OBJECT(win), "genisys-drag");
-	st->zone = Z_NONE;
-	st->started = 0;
-}
-
 static void genisys_install_gestures(GtkWindow *win) {
 	GtkWidget *w = GTK_WIDGET(win);
+	g_printerr("[genisys-gesture] installed; display=%s\n",
+	        gdk_display_get_name(gdk_display_get_default()));
 	DragState *st = g_new0(DragState, 1);
 	g_object_set_data_full(G_OBJECT(w), "genisys-drag", st, g_free);
 	GtkGesture *g = gtk_gesture_click_new();
@@ -169,7 +170,8 @@ static void genisys_install_gestures(GtkWindow *win) {
 	g_signal_connect(g, "pressed", G_CALLBACK(on_pressed), w);
 	g_signal_connect(g, "update", G_CALLBACK(on_update), w);
 	g_signal_connect(g, "released", G_CALLBACK(on_released), w);
-	g_signal_connect(g, "cancelled", G_CALLBACK(on_cancelled), w);
+	// note: GtkGesture::cancelled was removed in GTK 4.24; on_pressed
+	// resets state, so a missed release self-heals on the next press.
 	gtk_widget_add_controller(w, GTK_EVENT_CONTROLLER(g));
 }
 
@@ -183,7 +185,11 @@ static void genisys_schedule_gestures(GtkWindow *win) {
 }
 */
 import "C"
-import "unsafe"
+
+import (
+	"log"
+	"unsafe"
+)
 
 func installRoundedFramelessCSS() {
 	C.genisys_schedule_css()
@@ -193,8 +199,10 @@ func installRoundedFramelessCSS() {
 // to the GtkWindow behind a Wails window (unsafe.Pointer from
 // WebviewWindow.NativeWindow()). Deferred to the main loop via g_idle.
 func installWindowGestures(native unsafe.Pointer) {
+	log.Printf("gestures: native=%v", native)
 	if native == nil {
 		return
 	}
 	C.genisys_schedule_gestures((*C.GtkWindow)(native))
+	log.Print("gestures: idle queued")
 }

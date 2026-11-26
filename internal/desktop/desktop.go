@@ -11,6 +11,7 @@
 package desktop
 
 import (
+	"os"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -52,8 +53,10 @@ func Run(o Options) error {
 
 	// Re-round the frameless window at GTK level (see corners_gtk4.go);
 	// ApplicationStarted fires once GTK is initialised, before paint.
-	app.Event.OnApplicationEvent(events.Common.ApplicationStarted,
-		func(*application.ApplicationEvent) { installRoundedFramelessCSS() })
+	if os.Getenv("GENISYS_NO_ROUND") == "" {
+		app.Event.OnApplicationEvent(events.Common.ApplicationStarted,
+			func(*application.ApplicationEvent) { installRoundedFramelessCSS() })
+	}
 
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             "main",
@@ -66,7 +69,18 @@ func Run(o Options) error {
 		URL:              o.URL,
 		BackgroundColour: application.NewRGBA(19, 20, 25, 255), // match --color-bg (dark)
 	})
-	installWindowGestures(win.NativeWindow())
+	// The native GtkWindow only exists once app.Run() has created it —
+	// NativeWindow() is nil before that. Poll until it appears, then
+	// attach the gesture controller (g_idle_add is thread-safe).
+	go func() {
+		for range 200 {
+			if p := win.NativeWindow(); p != nil {
+				installWindowGestures(p)
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}()
 
 	if o.Ctl != nil {
 		o.Ctl.Minimize = func() { win.Minimise() }
