@@ -12,6 +12,7 @@ package desktop
 
 import (
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 // Controls are the native window actions Run publishes so the SPA can
@@ -47,6 +48,11 @@ func Run(o Options) error {
 		},
 	})
 
+	// Re-round the frameless window at GTK level (see corners_gtk4.go);
+	// ApplicationStarted fires once GTK is initialised, before paint.
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted,
+		func(*application.ApplicationEvent) { installRoundedFramelessCSS() })
+
 	win := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             "main",
 		Title:            o.Title,
@@ -56,11 +62,7 @@ func Run(o Options) error {
 		MinWidth:         1024,
 		MinHeight:        640,
 		URL:              o.URL,
-		// Fully transparent window: the SPA paints a rounded, shadowed
-		// app frame itself (CSS .shell .app-root), which also gives the
-		// frameless window a native-feeling floating look.
-		BackgroundType:   application.BackgroundTypeTransparent,
-		BackgroundColour: application.NewRGBA(0, 0, 0, 0),
+		BackgroundColour: application.NewRGBA(19, 20, 25, 255), // match --color-bg (dark)
 	})
 	if o.Ctl != nil {
 		o.Ctl.Minimize = func() { win.Minimise() }
