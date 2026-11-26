@@ -39,7 +39,8 @@ func Run(o Options) error {
 		Name:        "Genisys",
 		Description: "AI agent for OpenAI-compatible endpoints",
 		Linux: application.LinuxOptions{
-			ProgramName: "genisys",
+			ProgramName:   "genisys",
+			ApplicationID: "de.larsnieswandt.Genisys", // Wayland app_id; matches StartupWMClass
 		},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
@@ -55,7 +56,11 @@ func Run(o Options) error {
 		MinWidth:         1024,
 		MinHeight:        640,
 		URL:              o.URL,
-		BackgroundColour: application.NewRGBA(19, 20, 25, 255), // match --color-bg (dark)
+		// Fully transparent window: the SPA paints a rounded, shadowed
+		// app frame itself (CSS .shell .app-root), which also gives the
+		// frameless window a native-feeling floating look.
+		BackgroundType:   application.BackgroundTypeTransparent,
+		BackgroundColour: application.NewRGBA(0, 0, 0, 0),
 	})
 	if o.Ctl != nil {
 		o.Ctl.Minimize = func() { win.Minimise() }

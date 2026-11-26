@@ -94,3 +94,26 @@ body { background: var(--color-bg); color: var(--color-ink); font-family: var(--
 }
 .titlebar button:hover { background: var(--color-panel2); color: var(--color-ink); }
 .titlebar .tb-close:hover { background: #c7443e; color: #fff; }
+
+/* Transparent native window (desktop build): the app paints its own
+   rounded, shadowed frame; the 10px margin doubles as a roomy invisible
+   resize border and keeps the shadow inside the surface. */
+html.shell, html.shell body { background: transparent; }
+.shell .app-root {
+  background: var(--color-bg);
+  border-radius: 12px;
+  overflow: clip;
+  margin: 10px;
+  height: calc(100% - 20px);
+  width: calc(100% - 20px);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--color-line) 70%, transparent),
+    0 10px 40px rgba(0, 0, 0, 0.45);
+}
+.shell.max .app-root {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+  border-radius: 0;
+  box-shadow: none;
+}

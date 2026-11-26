@@ -60,7 +60,7 @@ export default function App() {
   const projName = projects.find((p) => p.id === sess?.project_id)?.name;
 
   return (
-    <div className="h-full flex flex-col min-w-0">
+    <div className="app-root h-full flex flex-col min-w-0">
       <TitleBar />
       <div className="flex-1 min-h-0 flex min-w-0">
       {/* left rail */}

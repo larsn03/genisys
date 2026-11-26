@@ -26,6 +26,14 @@ export function TitleBar() {
     return () => window.removeEventListener("resize", sync);
   }, [sync]);
 
+  // Drive window-level CSS: .shell enables the rounded, shadowed app
+  // frame in the transparent window; .max flattens it when maximised.
+  useEffect(() => {
+    const el = document.documentElement;
+    el.classList.toggle("shell", !!shell);
+    el.classList.toggle("max", !!shell?.maximized);
+  }, [shell]);
+
   if (!shell) return null;
   const max = shell.maximized;
 
